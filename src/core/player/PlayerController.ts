@@ -1,6 +1,12 @@
 import { toRaw } from "vue";
 import { AudioErrorCode } from "@/core/audio-player/BaseAudioPlayer";
-import { useDataStore, useMusicStore, useSettingStore, useStatusStore } from "@/stores";
+import {
+  useDataStore,
+  useListenTogetherStore,
+  useMusicStore,
+  useSettingStore,
+  useStatusStore,
+} from "@/stores";
 import type { AudioSourceType, QualityType, SongType } from "@/types/main";
 import type { RepeatModeType, ShuffleModeType } from "@/types/shared/play-mode";
 import { type AudioAnalysis } from "@/types/audio/automix";
@@ -261,6 +267,17 @@ class PlayerController {
   ) {
     const statusStore = useStatusStore();
     const audioManager = useAudioManager();
+    // 一起听模式下点歌只加入房间歌单，不打断房间播放
+    const listenTogetherStore = useListenTogetherStore();
+    if (listenTogetherStore.inRoomMode && !listenTogetherStore.isApplyingRemote) {
+      const target = options.song || getPlaySongData();
+      const targetId = target?.id;
+      if (targetId && targetId !== listenTogetherStore.currentTrackId) {
+        void listenTogetherStore.addSongToRoom(targetId);
+        window.$message.success("已加入一起听歌单");
+        return;
+      }
+    }
     // 重置过渡状态
     this.isTransitioning = false;
     useAutomixManager().resetNextAnalysisCache();
@@ -1280,6 +1297,16 @@ class PlayerController {
     const dataStore = useDataStore();
     const statusStore = useStatusStore();
     const audioManager = useAudioManager();
+    // 一起听模式下点击列表只是点歌，避免把房间播放拉走
+    const listenTogetherStore = useListenTogetherStore();
+    if (listenTogetherStore.inRoomMode && !listenTogetherStore.isApplyingRemote) {
+      const song = dataStore.playList[index];
+      if (song?.id && song.id !== listenTogetherStore.currentTrackId) {
+        void listenTogetherStore.addSongToRoom(song.id);
+        window.$message.success("已加入一起听歌单");
+        return;
+      }
+    }
 
     try {
       // 获取数据

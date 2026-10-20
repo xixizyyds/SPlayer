@@ -112,6 +112,7 @@
           <span class="setting-label">房间播放</span>
           <span class="setting-desc">
             {{ listenTogetherStore.lastSyncTime ? `上次同步 ${lastSyncText}` : "尚未同步" }}
+            · 待播 {{ listenTogetherStore.waitSongCount }} 首
           </span>
         </div>
         <div v-if="listenTogetherStore.currentTrack" class="track">
@@ -139,30 +140,6 @@
         <n-text depth="3" class="tip">多人房间里切歌要够多人点过，才会真正跳过</n-text>
       </div>
 
-      <div class="setting-row column">
-        <div class="setting-info">
-          <span class="setting-label">待播队列</span>
-          <span class="setting-desc">
-            {{ listenTogetherStore.waitSongCount || listenTogetherStore.queueSongs.length }}
-            首待播，顶歌可以把它移到更前面
-          </span>
-        </div>
-        <div v-if="listenTogetherStore.queueTracks.length" class="queue">
-          <div
-            v-for="(track, index) in listenTogetherStore.queueTracks.slice(0, 8)"
-            :key="track.id"
-            class="queue-item"
-          >
-            <span class="queue-index">{{ index + 1 }}</span>
-            <div class="track-info">
-              <span class="queue-name">{{ track.name }}</span>
-              <span class="queue-artist">{{ artistsOf(track) }}</span>
-            </div>
-            <n-button size="tiny" secondary @click="handleUp(track.id)">顶歌</n-button>
-          </div>
-        </div>
-        <n-text v-else depth="3" class="tip">队列还是空的，点歌会自动加进来</n-text>
-      </div>
 
       <n-flex justify="end" :size="8" class="footer">
         <n-button size="small" type="error" secondary @click="handleLeave">
@@ -175,7 +152,6 @@
 
 <script setup lang="ts">
 import { useListenTogetherStore } from "@/stores";
-import type { SongType } from "@/types/main";
 import { isLogin } from "@/utils/auth";
 import { copyData } from "@/utils/helper";
 import { msToTime } from "@/utils/time";
@@ -208,12 +184,6 @@ const trackArtists = computed(() => {
   return Array.isArray(artists) ? artists.map((artist) => artist.name).join(" / ") : artists;
 });
 
-// 队列歌曲歌手
-const artistsOf = (track: SongType) => {
-  const artists = track.artists;
-  if (!artists) return "未知歌手";
-  return Array.isArray(artists) ? artists.map((artist) => artist.name).join(" / ") : artists;
-};
 
 // 上次同步时间
 const lastSyncText = computed(() => {
@@ -277,10 +247,6 @@ const handlePushSong = async () => {
   await listenTogetherStore.pushCurrentSong();
 };
 
-// 顶歌
-const handleUp = async (songId: number) => {
-  await listenTogetherStore.upSong(songId);
-};
 
 // 点赞当前曲目
 const handleLike = async () => {

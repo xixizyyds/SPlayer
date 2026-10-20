@@ -684,11 +684,22 @@ export const useListenTogetherStore = defineStore("listenTogether", {
      * @param list 队列条目
      */
     setQueue(list: Array<{ songId: number; bizId: number }>) {
-      const queue = list.filter((item) => item.songId > 0);
-      const key = queue.map((item) => `${item.songId}:${item.bizId}`).join(",");
+      const incoming = list.filter((item) => item.songId > 0);
+      // 服务端每次只下发接下来几首，这里累积成完整队列，已播过的自动移除
+      const merged = this.queueSongs.filter((item) => item.songId !== this.currentTrackId);
+      for (const item of incoming) {
+        if (item.songId === this.currentTrackId) continue;
+        const exist = merged.find((entry) => entry.songId === item.songId);
+        if (exist) {
+          if (!exist.bizId && item.bizId) exist.bizId = item.bizId;
+        } else {
+          merged.push({ ...item });
+        }
+      }
+      const key = merged.map((item) => `${item.songId}:${item.bizId}`).join(",");
       const oldKey = this.queueSongs.map((item) => `${item.songId}:${item.bizId}`).join(",");
-      this.queueSongs = queue;
-      this.roomTrackIds = queue.map((item) => item.songId);
+      this.queueSongs = merged;
+      this.roomTrackIds = merged.map((item) => item.songId);
       if (key !== oldKey) void this.fetchQueueTracks();
     },
     /** 拉取队列歌曲详情 */

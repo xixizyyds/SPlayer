@@ -112,6 +112,15 @@
                 >
                   <SvgIcon :size="20" name="Delete" />
                 </div>
+                <!-- 顶歌（一起听） -->
+                <div
+                  v-if="inRoomMode && statusStore.playIndex !== index"
+                  class="top-song"
+                  title="顶歌"
+                  @click.stop="handleTopSong(songData.id)"
+                >
+                  <SvgIcon :size="20" name="Up" />
+                </div>
               </div>
             </div>
           </template>
@@ -200,6 +209,12 @@ const handlePlayIndex = (index: number) => {
   }
   player.togglePlayIndex(index, true);
   statusStore.playListShow = false;
+};
+
+/** 一起听顶歌 */
+const handleTopSong = (songId: number) => {
+  if (!songId) return;
+  void listenTogetherStore.upSong(songId);
 };
 
 const playListRef = ref<InstanceType<typeof VirtualScroll> | null>(null);
@@ -389,6 +404,19 @@ const {
       justify-content: center;
       padding: 8px;
       border-radius: 8px;
+      transition: background-color 0.3s;
+      cursor: pointer;
+      &:hover {
+        background-color: rgba(var(--primary), 0.29);
+      }
+    }
+    .top-song {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border-radius: 8px;
+      color: rgba(var(--primary), 1);
       transition: background-color 0.3s;
       cursor: pointer;
       &:hover {
