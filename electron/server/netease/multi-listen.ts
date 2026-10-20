@@ -165,9 +165,9 @@ export const initMultiListenAPI = async (fastify: FastifyInstance) => {
       });
     });
 
-    // 创建房间（type=1 为好友/链接房）
+    // 创建房间（type=1 双人，type=2 多人）
     fastify.post("/create", async (request, reply) => {
-      const { songId } = readBody(request);
+      const { songId, roomType } = readBody(request);
       const safeSongId = toSongId(songId);
       if (!safeSongId) {
         return reply.send({ code: 400, message: "创建房间需要一首有效的歌曲", data: null });
@@ -177,7 +177,7 @@ export const initMultiListenAPI = async (fastify: FastifyInstance) => {
         return reply.send({ code: 400, message: "获取校验令牌失败，请稍后重试", data: null });
       }
       return handle(request, reply, "/api/listen/together/multi/room/create", {
-        type: 1,
+        type: Number(roomType) === 1 ? 1 : 2,
         songId: safeSongId,
         groupIds: "[]",
         inviteUids: "[]",

@@ -13,20 +13,27 @@
         <div class="setting-info">
           <span class="setting-label">创建房间</span>
           <span class="setting-desc">
-            以当前播放的歌曲开房，创建后把链接发给好友即可加入
+            {{ createType === 2 ? "多人房，人数不限" : "双人房，只同步给一个好友" }} ·
+            以当前播放的歌曲开房
           </span>
         </div>
-        <n-button
-          type="primary"
-          strong
-          secondary
-          size="small"
-          :loading="creating"
-          :disabled="!loggedIn"
-          @click="handleCreate"
-        >
-          创建
-        </n-button>
+        <n-flex align="center" :size="8">
+          <n-radio-group v-model:value="createType" size="small">
+            <n-radio-button :value="2">多人</n-radio-button>
+            <n-radio-button :value="1">双人</n-radio-button>
+          </n-radio-group>
+          <n-button
+            type="primary"
+            strong
+            secondary
+            size="small"
+            :loading="creating"
+            :disabled="!loggedIn"
+            @click="handleCreate"
+          >
+            创建
+          </n-button>
+        </n-flex>
       </div>
       <div class="setting-row column">
         <div class="setting-info">
@@ -67,9 +74,14 @@
           <span class="setting-label">房间</span>
           <span class="setting-desc">{{ listenTogetherStore.roomId }}</span>
         </div>
-        <n-tag size="small" :type="roomAvailable ? 'success' : 'default'">
-          {{ listenTogetherStore.roomStatusText || "已连接" }}
-        </n-tag>
+        <n-flex align="center" :size="6">
+          <n-tag size="small" :bordered="false">
+            {{ listenTogetherStore.roomBizType === 1 ? "双人房" : "多人房" }}
+          </n-tag>
+          <n-tag size="small" :type="roomAvailable ? 'success' : 'default'">
+            {{ listenTogetherStore.roomStatusText || "已连接" }}
+          </n-tag>
+        </n-flex>
       </div>
 
       <div class="setting-row">
@@ -162,6 +174,8 @@ const creating = ref(false);
 const joining = ref(false);
 const applying = ref(false);
 const inviteLink = ref("");
+// 创建房间类型：1 双人，2 多人
+const createType = ref<1 | 2>(2);
 
 // 加入表单
 const joinForm = reactive({
@@ -197,7 +211,7 @@ const lastSyncText = computed(() => {
 const handleCreate = async () => {
   creating.value = true;
   try {
-    await listenTogetherStore.createRoom();
+    await listenTogetherStore.createRoom(createType.value);
   } finally {
     creating.value = false;
   }

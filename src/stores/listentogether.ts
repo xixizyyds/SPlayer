@@ -63,6 +63,8 @@ interface ListenTogetherState {
   inviterId: number;
   /** 是否为房主 */
   isCreator: boolean;
+  /** 房间业务类型：1 双人，2 多人 */
+  roomBizType: number;
   /** 是否在房间中 */
   inRoom: boolean;
   /** 在线成员 */
@@ -144,6 +146,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     roomId: "",
     inviterId: 0,
     isCreator: false,
+    roomBizType: 0,
     inRoom: false,
     members: [],
     onlineNums: 0,
@@ -276,8 +279,11 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         return false;
       }
     },
-    /** 创建多人一起听房间 */
-    async createRoom() {
+    /**
+     * 创建一起听房间
+     * @param roomType 1 双人，2 多人
+     */
+    async createRoom(roomType: 1 | 2 = 2) {
       if (!isLogin()) {
         window.$message.warning("请先登录网易云账号");
         return false;
@@ -289,7 +295,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         return false;
       }
       try {
-        const result = await multiListenCreate(songId);
+        const result = await multiListenCreate(songId, roomType);
         if (!result || result.code !== 200) {
           window.$message.error(result?.message || "创建一起听房间失败");
           return false;
@@ -411,6 +417,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       this.roomId = "";
       this.inviterId = 0;
       this.isCreator = false;
+      this.roomBizType = 0;
       this.inRoom = false;
       this.members = [];
       this.onlineNums = 0;
@@ -522,6 +529,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         this.inviterId = Number(roomInfo.creatorId) || this.inviterId;
         this.isCreator = Number(roomInfo.creatorId) === dataStore.userData.userId;
       }
+      if (roomInfo.roomBizType) this.roomBizType = Number(roomInfo.roomBizType);
       this.roomStatusText = roomInfo.roomClosed ? "房间已关闭" : "房间可用";
       this.members = (userAgg.onlineUserInfos ?? [])
         .map((user) => ({

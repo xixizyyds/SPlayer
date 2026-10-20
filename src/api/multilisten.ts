@@ -61,6 +61,8 @@ export interface MultiListenRoomInfo {
   firstUserId?: number;
   chatRoomId?: string;
   roomType?: string;
+  /** 房间业务类型：1 双人，2 多人 */
+  roomBizType?: number;
   roomStatus?: number;
   roomClosed?: boolean;
   roomCreateTime?: number;
@@ -124,12 +126,12 @@ export const multiListenStatus = () => {
  * 创建多人房间
  * @param songId 初始歌曲 ID
  */
-export const multiListenCreate = (songId: number | string) => {
+export const multiListenCreate = (songId: number | string, roomType: 1 | 2 = 2) => {
   return request<MultiListenResponse<Record<string, unknown>>>({
     baseURL: "/api/multilisten",
     url: "/create",
     method: "post",
-    data: { songId },
+    data: { songId, roomType },
   });
 };
 

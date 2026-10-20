@@ -57,6 +57,13 @@
         </n-flex>
         <div class="center">
           <div class="btn">
+            <!-- 一起听模式：只保留切歌 -->
+            <template v-if="inRoomMode">
+              <div class="btn-icon" title="切歌（需房间内多人同意）" @click.stop="handleSkip">
+                <SvgIcon :size="28" name="SkipNext" />
+              </div>
+            </template>
+            <template v-else>
             <!-- 随机按钮 -->
             <template v-if="musicStore.playSong.type !== 'radio' && !statusStore.personalFmMode">
               <div class="btn-icon mode-icon" @click.stop="player.toggleShuffle()">
@@ -120,6 +127,7 @@
                 />
               </div>
             </template>
+            </template>
           </div>
           <!-- 进度条 -->
           <div
@@ -150,7 +158,13 @@
 <script setup lang="ts">
 import { usePlayerController } from "@/core/player/PlayerController";
 import { useSongManager } from "@/core/player/SongManager";
-import { useDataStore, useMusicStore, useStatusStore, useSettingStore } from "@/stores";
+import {
+  useDataStore,
+  useListenTogetherStore,
+  useMusicStore,
+  useStatusStore,
+  useSettingStore,
+} from "@/stores";
 import { toLikeSong } from "@/utils/auth";
 import { useTimeFormat } from "@/composables/useTimeFormat";
 import { openDownloadSong, openPlaylistAdd } from "@/utils/modal";
@@ -159,6 +173,15 @@ import { formatCommentCount } from "@/utils/format";
 
 const dataStore = useDataStore();
 const musicStore = useMusicStore();
+const listenTogetherStore = useListenTogetherStore();
+
+// 一起听模式只保留切歌按钮
+const inRoomMode = computed(() => listenTogetherStore.inRoomMode);
+
+/** 一起听切歌：需要房间里的其他人同意 */
+const handleSkip = () => {
+  void listenTogetherStore.requestSkip();
+};
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
 
