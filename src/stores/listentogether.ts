@@ -671,6 +671,12 @@ export const useListenTogetherStore = defineStore("listenTogether", {
             })),
           );
         }
+        // 新歌排在队列末尾，服务端窗口暂时看不到，本地先补进列表
+        if (songId !== this.currentTrackId && !this.queueSongs.some((i) => i.songId === songId)) {
+          this.queueSongs.push({ songId, bizId: 0 });
+          this.roomTrackIds = this.queueSongs.map((item) => item.songId);
+          void this.fetchQueueTracks();
+        }
         if (!silent) window.$message.success("已加入房间歌单");
         return true;
       } catch (error) {
@@ -720,7 +726,11 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       }
       try {
         const result = await songDetail(ids);
-        this.queueTracks = formatSongsList(result?.songs ?? []);
+        const byId = new Map(formatSongsList(result?.songs ?? []).map((song) => [song.id, song]));
+        // 严格按房间队列顺序排列，避免接口返回顺序打乱列表
+        this.queueTracks = this.queueSongs
+          .map((item) => byId.get(item.songId))
+          .filter((song): song is SongType => Boolean(song));
         this.syncRoomPlayList();
       } catch (error) {
         console.warn("获取一起听队列失败：", error);

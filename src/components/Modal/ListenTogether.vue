@@ -76,7 +76,7 @@
         </div>
         <n-flex align="center" :size="6">
           <n-tag size="small" :bordered="false">
-            {{ listenTogetherStore.roomBizType === 1 ? "双人房" : "多人房" }}
+            {{ listenTogetherStore.onlineNums }} 人在线
           </n-tag>
           <n-tag size="small" :type="roomAvailable ? 'success' : 'default'">
             {{ listenTogetherStore.roomStatusText || "已连接" }}
