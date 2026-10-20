@@ -100,6 +100,8 @@ export interface MultiListenOperateData {
   failedMsg?: string;
   failedCode?: number;
   roomSongInfo?: MultiListenPlayInfo;
+  /** 距离下次可点歌的秒数 */
+  nextAddSongDuration?: number;
 }
 
 /** 歌曲操作类型 */

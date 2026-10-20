@@ -125,6 +125,9 @@
           <span class="setting-desc">
             {{ listenTogetherStore.lastSyncTime ? `上次同步 ${lastSyncText}` : "尚未同步" }}
             · 待播 {{ listenTogetherStore.waitSongCount }} 首
+            <template v-if="listenTogetherStore.addCooldownRemain">
+              · 点歌冷却 {{ listenTogetherStore.addCooldownRemain }} 秒
+            </template>
           </span>
         </div>
         <div v-if="listenTogetherStore.currentTrack" class="track">

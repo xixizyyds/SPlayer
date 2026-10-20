@@ -115,6 +115,10 @@ interface ListenTogetherState {
   heartbeatDuration: number;
   /** 是否正在刷新房间 */
   refreshing: boolean;
+  /** 点歌冷却结束时间戳（毫秒） */
+  addCooldownEnd: number;
+  /** 冷却倒计时用的时间刻度 */
+  cooldownTick: number;
 }
 
 /** 转为数字 ID */
@@ -172,6 +176,8 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     heartbeatTimer: null,
     heartbeatDuration: DEFAULT_HEARTBEAT_INTERVAL,
     refreshing: false,
+    addCooldownEnd: 0,
+    cooldownTick: 0,
   }),
   getters: {
     /** 邀请链接（官方多人分享页） */
@@ -196,6 +202,11 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     /** 是否处于一起听模式 */
     inRoomMode(state): boolean {
       return state.mode === "room";
+    },
+    /** 点歌冷却剩余秒数 */
+    addCooldownRemain(state): number {
+      const left = Math.ceil((state.addCooldownEnd - state.cooldownTick) / 1000);
+      return left > 0 ? left : 0;
     },
   },
   actions: {
@@ -446,6 +457,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     startTimers() {
       this.stopTimers();
       this.roomTimer = window.setInterval(() => {
+        this.cooldownTick = Date.now();
         void this.refreshRoom();
       }, ROOM_REFRESH_INTERVAL);
       this.restartHeartbeat();
@@ -492,6 +504,12 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       playerWatchers = [];
     },
     /** 刷新房间状态 */
+    /** 更新点歌冷却（服务端下发的是秒） */
+    setAddCooldown(seconds: number) {
+      const value = Number(seconds) || 0;
+      this.cooldownTick = Date.now();
+      this.addCooldownEnd = value > 0 ? Date.now() + value * 1000 : 0;
+    },
     async refreshRoom(force = false) {
       if (!this.inRoom || this.refreshing) return;
       this.refreshing = true;
@@ -506,6 +524,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
           this.handleRoomOffline(result.data?.leaveRoomTitle || "一起听房间已失效");
           return;
         }
+        this.setAddCooldown(Number(result.data?.nextAddSongDuration ?? 0));
         this.applySnapshot(snapshot, force);
       } catch (error) {
         console.warn("刷新一起听房间失败：", error);
@@ -581,10 +600,18 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         const { usePlayerController } = await import("@/core/player/PlayerController");
         const player = usePlayerController();
         const musicStore = useMusicStore();
+        const statusStore = useStatusStore();
         const needSwitch = musicStore.playSong.id !== trackId;
         const needSeek = !needSwitch && Math.abs(player.getSeek() - progress) > SEEK_TOLERANCE;
         this.appliedRemoteKey = key;
-        if (!needSwitch && !needSeek) return;
+        if (!needSwitch && !needSeek) {
+          // 房间在放，本地却是暂停的（例如进房前暂停过），这里跟上
+          if (!statusStore.playStatus) {
+            await player.play();
+            this.holdRemoteSilence();
+          }
+          return;
+        }
         this.isApplyingRemote = true;
         if (needSwitch) {
           const song = this.currentTrack?.id === trackId
@@ -646,6 +673,12 @@ export const useListenTogetherStore = defineStore("listenTogether", {
      */
     async addSongToRoom(songId: number, silent = false) {
       if (!this.inRoom || !this.roomId || !songId) return false;
+      if (this.addCooldownRemain > 0) {
+        if (!silent) {
+          window.$message.warning(`点歌冷却中，还要等 ${this.addCooldownRemain} 秒`);
+        }
+        return false;
+      }
       try {
         const result = await multiListenOperate({
           roomId: this.roomId,
@@ -678,6 +711,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
           void this.fetchQueueTracks();
         }
         if (!silent) window.$message.success("已加入房间歌单");
+        this.setAddCooldown(Number(data?.nextAddSongDuration ?? 60));
         return true;
       } catch (error) {
         console.warn("加入一起听歌单失败：", error);
@@ -869,11 +903,16 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       if (!pending.length) return 0;
       let added = 0;
       for (const id of pending) {
+        if (this.addCooldownRemain > 0) break;
         if (await this.addSongToRoom(id, true)) added += 1;
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
       if (added > 0) {
-        window.$message.success(`已向房间歌单补充 ${added} 首`);
+        window.$message.success(
+          this.addCooldownRemain > 0
+            ? `向房间歌单补充了 ${added} 首，点歌有 ${this.addCooldownRemain} 秒冷却`
+            : `已向房间歌单补充 ${added} 首`,
+        );
       }
       return added;
     },
