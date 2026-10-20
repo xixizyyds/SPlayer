@@ -1,0 +1,62 @@
+name: build-desktop
+
+# 手动触发或推送到 feature 分支时构建 x64 桌面包
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/listen-together
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            script: build:linux
+            artifact: linux-x64
+          - os: windows-latest
+            script: build:win
+            artifact: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Rust 工具链用于编译 native/ 下的三个原生模块
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Linux 打包 pacman/deb/appimage 需要这些系统依赖
+      - name: install linux deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm fakeroot
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: build
+        run: pnpm ${{ matrix.script }} --x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: splayer-${{ matrix.artifact }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.pacman
+            dist/*.tar.*
+          if-no-files-found: warn
+          retention-days: 14
