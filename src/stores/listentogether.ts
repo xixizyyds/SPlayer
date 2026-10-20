@@ -692,18 +692,19 @@ export const useListenTogetherStore = defineStore("listenTogether", {
      * @param list 队列条目
      */
     setQueue(list: Array<{ songId: number; bizId: number }>) {
-      const incoming = list.filter((item) => item.songId > 0);
-      // 服务端每次只下发接下来几首，这里累积成完整队列，已播过的自动移除
-      const merged = this.queueSongs.filter((item) => item.songId !== this.currentTrackId);
-      for (const item of incoming) {
-        if (item.songId === this.currentTrackId) continue;
-        const exist = merged.find((entry) => entry.songId === item.songId);
-        if (exist) {
-          if (!exist.bizId && item.bizId) exist.bizId = item.bizId;
-        } else {
-          merged.push({ ...item });
-        }
-      }
+      const incoming = list.filter(
+        (item) => item.songId > 0 && item.songId !== this.currentTrackId,
+      );
+      // 服务端每次只下发接下来几首，这里累积成完整队列；窗口内的顺序以服务端为准（顶歌后就地前移）
+      const incomingIds = new Set(incoming.map((item) => item.songId));
+      const head = incoming.map((item) => {
+        const old = this.queueSongs.find((entry) => entry.songId === item.songId);
+        return { songId: item.songId, bizId: item.bizId || old?.bizId || 0 };
+      });
+      const tail = this.queueSongs.filter(
+        (item) => item.songId !== this.currentTrackId && !incomingIds.has(item.songId),
+      );
+      const merged = [...head, ...tail];
       const key = merged.map((item) => `${item.songId}:${item.bizId}`).join(",");
       const oldKey = this.queueSongs.map((item) => `${item.songId}:${item.bizId}`).join(",");
       this.queueSongs = merged;
