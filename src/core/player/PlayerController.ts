@@ -1198,6 +1198,15 @@ class PlayerController {
     const dataStore = useDataStore();
     const statusStore = useStatusStore();
     const musicStore = useMusicStore();
+    // 一起听模式下双击列表只是点歌，别把本地歌单换成别的列表
+    const listenTogetherStore = useListenTogetherStore();
+    if (listenTogetherStore.inRoomMode && !listenTogetherStore.isApplyingRemote) {
+      const targetId = song?.id || data[0]?.id;
+      if (targetId && targetId !== listenTogetherStore.currentTrackId) {
+        void listenTogetherStore.addSongToRoom(targetId);
+        return;
+      }
+    }
     if (!data || !data.length) return;
     // 处理随机模式
     let processedData = [...data];
@@ -1263,6 +1272,14 @@ class PlayerController {
     const dataStore = useDataStore();
     const musicStore = useMusicStore();
     const statusStore = useStatusStore();
+    // 一起听模式下双击只是把歌加进房间队列
+    const listenTogetherStore = useListenTogetherStore();
+    if (listenTogetherStore.inRoomMode && !listenTogetherStore.isApplyingRemote) {
+      if (song?.id && song.id !== listenTogetherStore.currentTrackId) {
+        void listenTogetherStore.addSongToRoom(song.id);
+      }
+      return;
+    }
     const wasPersonalFm = statusStore.personalFmMode;
     // 关闭特殊模式
     if (statusStore.personalFmMode) statusStore.personalFmMode = false;

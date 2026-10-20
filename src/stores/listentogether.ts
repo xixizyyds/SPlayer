@@ -696,6 +696,9 @@ export const useListenTogetherStore = defineStore("listenTogether", {
           }
           return false;
         }
+        if (typeof data?.roomSongInfo?.waitSongCount === "number") {
+          this.waitSongCount = data.roomSongInfo.waitSongCount;
+        }
         if (data?.roomSongInfo?.nextSongs) {
           this.setQueue(
             data.roomSongInfo.nextSongs.map((song) => ({
@@ -744,7 +747,11 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       const tail = this.queueSongs.filter(
         (item) => item.songId !== this.currentTrackId && !incomingIds.has(item.songId),
       );
-      const merged = [...head, ...tail];
+      let merged = [...head, ...tail];
+      // 服务端的待播数量是准的，本地累积超过它说明有歌被别人删掉了，砍掉尾部多出来的
+      if (this.waitSongCount > 0 && merged.length > this.waitSongCount) {
+        merged = merged.slice(0, this.waitSongCount);
+      }
       const key = merged.map((item) => `${item.songId}:${item.bizId}`).join(",");
       const oldKey = this.queueSongs.map((item) => `${item.songId}:${item.bizId}`).join(",");
       this.queueSongs = merged;
@@ -795,6 +802,9 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         if (!result || result.code !== 200 || failed) {
           window.$message.warning(data?.failedMsg || "顶歌失败");
           return false;
+        }
+        if (typeof data?.roomSongInfo?.waitSongCount === "number") {
+          this.waitSongCount = data.roomSongInfo.waitSongCount;
         }
         if (data?.roomSongInfo?.nextSongs) {
           this.setQueue(
@@ -867,6 +877,9 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         if (!data) return;
         const playInfo = data.roomPlaySongInfo;
         if (playInfo) {
+          if (typeof playInfo.waitSongCount === "number") {
+            this.waitSongCount = playInfo.waitSongCount;
+          }
           const trackId = toId(playInfo.playSong?.songId);
           if (trackId) {
             this.currentSongBizId = toId(playInfo.playSong?.songBizId) || this.currentSongBizId;
