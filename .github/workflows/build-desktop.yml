@@ -7,6 +7,9 @@ on:
     branches:
       - feature/listen-together
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -60,3 +63,30 @@ jobs:
             dist/*.tar.*
           if-no-files-found: warn
           retention-days: 14
+
+  # 两个平台都编完后，把安装包统一发一个 Release
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: listen-together-${{ github.run_number }}
+          name: SPlayer 一起听 build ${{ github.run_number }}
+          prerelease: true
+          body: |
+            自动构建的 x64 测试包，含一起听功能。
+            Linux 用 AppImage 或 deb，Windows 用 portable exe 或 setup。
+          files: |
+            packages/*.exe
+            packages/*.AppImage
+            packages/*.deb
+            packages/*.pacman
+            packages/*.tar.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
