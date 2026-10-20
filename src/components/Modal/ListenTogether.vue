@@ -1,187 +1,181 @@
 <template>
-  <n-flex class="listen-together" :size="16" vertical>
+  <div class="listen-together">
     <!-- 未登录提示 -->
     <n-alert v-if="!loggedIn" type="warning" :bordered="false" title="需要登录">
       一起听依赖网易云账号登录，请先在设置中登录后再使用。
     </n-alert>
 
+    <n-h3 prefix="bar">一起听</n-h3>
+
     <!-- 未加入房间 -->
     <template v-if="!listenTogetherStore.inRoom">
-      <n-card size="small">
-        <template #header>
-          <n-flex align="center" :size="8">
-            <SvgIcon name="PlayCircle" :size="20" />
-            <n-text strong>创建房间</n-text>
-          </n-flex>
-        </template>
-        <n-flex vertical :size="12">
-          <n-text depth="3">创建后可以把邀请链接发给好友，或让对方使用房间号加入。</n-text>
-          <n-button
-            type="primary"
-            strong
-            secondary
-            :loading="creating"
-            :disabled="!loggedIn"
-            @click="handleCreate"
-          >
-            <template #icon>
-              <SvgIcon name="Add" />
-            </template>
-            创建一起听房间
-          </n-button>
-        </n-flex>
-      </n-card>
-
-      <n-card size="small">
-        <template #header>
-          <n-flex align="center" :size="8">
-            <SvgIcon name="Person" :size="20" />
-            <n-text strong>加入房间</n-text>
-          </n-flex>
-        </template>
-        <n-flex vertical :size="12">
-          <n-input v-model:value="joinForm.roomId" placeholder="房间号" clearable />
-          <n-input v-model:value="joinForm.inviterId" placeholder="邀请者 ID" clearable />
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">创建房间</span>
+          <span class="setting-desc">
+            以当前播放的歌曲开房，创建后把链接发给好友即可加入
+          </span>
+        </div>
+        <n-button
+          type="primary"
+          strong
+          secondary
+          size="small"
+          :loading="creating"
+          :disabled="!loggedIn"
+          @click="handleCreate"
+        >
+          创建
+        </n-button>
+      </div>
+      <div class="setting-row column">
+        <div class="setting-info">
+          <span class="setting-label">加入房间</span>
+          <span class="setting-desc">粘贴邀请链接，或手动填写房间号与邀请者 ID</span>
+        </div>
+        <n-flex vertical :size="8" class="join-form">
           <n-input
             v-model:value="inviteLink"
-            placeholder="也可直接粘贴邀请链接自动识别"
+            placeholder="粘贴邀请链接自动识别"
             clearable
             @update:value="handleInviteInput"
           />
+          <n-input v-model:value="joinForm.roomId" placeholder="房间号" clearable />
+          <n-input v-model:value="joinForm.inviterId" placeholder="邀请者 ID" clearable />
           <n-button
             type="primary"
             strong
             secondary
+            size="small"
             :loading="joining"
             :disabled="!loggedIn"
             @click="handleJoin"
           >
-            <template #icon>
-              <SvgIcon name="Link" />
-            </template>
-            加入一起听房间
+            加入一起听
           </n-button>
         </n-flex>
-      </n-card>
+      </div>
+      <n-text depth="3" class="tip">
+        多人房间由网易云官方协议同步，同一首歌会在所有人的客户端一起播放。
+      </n-text>
     </template>
 
     <!-- 房间信息 -->
     <template v-else>
-      <n-card size="small">
-        <template #header>
-          <n-flex align="center" justify="space-between">
-            <n-flex align="center" :size="8">
-              <SvgIcon name="Person" :size="20" />
-              <n-text strong>房间 {{ listenTogetherStore.roomId }}</n-text>
-            </n-flex>
-            <n-tag size="small" :type="roomAvailable ? 'success' : 'default'">
-              {{ listenTogetherStore.roomStatusText || "已连接" }}
-            </n-tag>
-          </n-flex>
-        </template>
-        <n-flex vertical :size="12">
-          <n-flex align="center" justify="space-between">
-            <n-text depth="3">邀请者 ID：{{ listenTogetherStore.inviterId }}</n-text>
-            <n-button size="small" type="primary" strong secondary @click="handleCopyLink">
-              <template #icon>
-                <SvgIcon name="Copy" />
-              </template>
-              复制邀请链接
-            </n-button>
-          </n-flex>
-          <n-divider class="divider" />
-          <n-text depth="3">在线成员（{{ listenTogetherStore.memberCount }}）</n-text>
-          <n-empty
-            v-if="!listenTogetherStore.members.length"
-            size="small"
-            description="暂无在线成员"
-          />
-          <n-flex v-else :size="16" align="flex-start" class="member-list">
-            <n-flex
-              v-for="user in listenTogetherStore.members"
-              :key="user.userId"
-              align="center"
-              :size="4"
-              vertical
-              class="member"
-            >
-              <n-avatar round :size="36" :src="user.avatarUrl || undefined">
-                {{ (user.nickname || "听").slice(0, 1) }}
-              </n-avatar>
-              <n-text class="member-name" depth="2">
-                {{ user.nickname || `用户 ${user.userId}` }}
-              </n-text>
-            </n-flex>
-          </n-flex>
-        </n-flex>
-      </n-card>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">房间</span>
+          <span class="setting-desc">{{ listenTogetherStore.roomId }}</span>
+        </div>
+        <n-tag size="small" :type="roomAvailable ? 'success' : 'default'">
+          {{ listenTogetherStore.roomStatusText || "已连接" }}
+        </n-tag>
+      </div>
 
-      <!-- 房间播放状态 -->
-      <n-card size="small">
-        <template #header>
-          <n-flex align="center" :size="8">
-            <SvgIcon name="Music" :size="20" />
-            <n-text strong>房间播放</n-text>
-          </n-flex>
-        </template>
-        <n-flex vertical :size="12">
-          <n-flex v-if="listenTogetherStore.currentTrack" align="center" :size="12">
-            <n-avatar round :size="48" :src="currentCover || undefined" />
-            <n-flex vertical :size="2" class="track-info">
-              <n-text strong class="track-name">{{ listenTogetherStore.currentTrack.name }}</n-text>
-              <n-text depth="3" class="track-artist">{{ trackArtists }}</n-text>
-            </n-flex>
-          </n-flex>
-          <n-text v-else depth="3">暂无同步曲目</n-text>
-          <n-flex align="center" :size="12">
-            <n-tag
-              size="small"
-              :type="listenTogetherStore.remotePlayStatus === 'PLAY' ? 'success' : 'default'"
-            >
-              {{ listenTogetherStore.remotePlayStatus === "PLAY" ? "播放中" : "已暂停" }}
-            </n-tag>
-            <n-text depth="3">{{ msToTime(listenTogetherStore.remoteProgress) }}</n-text>
-            <n-text v-if="listenTogetherStore.lastSyncTime" depth="3">
-              上次同步 {{ lastSyncText }}
-            </n-text>
-          </n-flex>
-          <n-flex align="center" :size="8">
-            <n-switch v-model:value="listenTogetherStore.followEnabled" size="small" />
-            <n-text depth="2">跟随房间同步播放</n-text>
-          </n-flex>
-          <n-flex :size="8">
-            <n-button size="small" secondary :loading="applying" @click="handleApply">
-              立即同步
-            </n-button>
-            <n-button size="small" secondary @click="handlePushSong">推送当前歌曲</n-button>
-            <n-button size="small" secondary :loading="syncing" @click="handlePushPlaylist">
-              同步播放列表
-            </n-button>
-          </n-flex>
-          <n-text depth="3" class="tip">
-            房间播放信息由服务端返回，若对方未回传状态，可使用「立即同步」手动拉取。
-          </n-text>
-        </n-flex>
-      </n-card>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">在线成员</span>
+          <span class="setting-desc">共 {{ listenTogetherStore.memberCount }} 人</span>
+        </div>
+        <n-button size="tiny" secondary @click="handleCopyLink">复制邀请链接</n-button>
+      </div>
 
-      <n-flex justify="end" :size="8">
-        <n-button
-          v-if="listenTogetherStore.isCreator"
-          size="small"
-          type="error"
-          secondary
-          @click="handleLeave(true)"
-        >
-          关闭房间
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">播放模式</span>
+          <span class="setting-desc">
+            一起听时播放列表只显示房间歌单，退出后还原原来的播放队列
+          </span>
+        </div>
+        <n-tag size="small" type="info">一起听中</n-tag>
+      </div>
+
+      <div v-if="listenTogetherStore.members.length" class="member-list">
+        <div v-for="user in listenTogetherStore.members" :key="user.userId" class="member">
+          <n-avatar round :size="40" :src="user.avatarUrl || undefined">
+            {{ (user.nickname || "听").slice(0, 1) }}
+          </n-avatar>
+          <span class="member-name">{{ user.nickname || `用户 ${user.userId}` }}</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">跟随房间播放</span>
+          <span class="setting-desc">切换歌曲与进度按房间对齐</span>
+        </div>
+        <n-switch v-model:value="listenTogetherStore.followEnabled" size="small" />
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-info">
+          <span class="setting-label">房间播放</span>
+          <span class="setting-desc">
+            {{ listenTogetherStore.lastSyncTime ? `上次同步 ${lastSyncText}` : "尚未同步" }}
+          </span>
+        </div>
+        <div v-if="listenTogetherStore.currentTrack" class="track">
+          <n-avatar round :size="44" :src="currentCover || undefined" />
+        <div class="track-info">
+            <span class="track-name">{{ listenTogetherStore.currentTrack.name }}</span>
+            <span class="track-artist">{{ trackArtists }}</span>
+          </div>
+          <n-tag size="tiny" :bordered="false" class="zan-count">
+            赞 {{ listenTogetherStore.zanCount }}
+          </n-tag>
+          <span class="track-time">
+            {{ msToTime(listenTogetherStore.remoteProgress) }}
+          </span>
+        </div>
+        <n-text v-else depth="3" class="tip">暂无同步曲目</n-text>
+        <n-flex :size="8">
+          <n-button size="small" secondary :loading="applying" @click="handleApply">
+            立即同步
+          </n-button>
+          <n-button size="small" secondary @click="handleLike">点赞</n-button>
+          <n-button size="small" secondary @click="handlePushSong">添加到歌单</n-button>
+          <n-button size="small" secondary @click="handleSkip">切歌</n-button>
+        </n-flex>
+        <n-text depth="3" class="tip">多人房间里切歌要够多人点过，才会真正跳过</n-text>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-info">
+          <span class="setting-label">待播队列</span>
+          <span class="setting-desc">
+            {{ listenTogetherStore.waitSongCount || listenTogetherStore.queueSongs.length }}
+            首待播，顶歌可以把它移到更前面
+          </span>
+        </div>
+        <div v-if="listenTogetherStore.queueTracks.length" class="queue">
+          <div
+            v-for="(track, index) in listenTogetherStore.queueTracks.slice(0, 8)"
+            :key="track.id"
+            class="queue-item"
+          >
+            <span class="queue-index">{{ index + 1 }}</span>
+            <div class="track-info">
+              <span class="queue-name">{{ track.name }}</span>
+              <span class="queue-artist">{{ artistsOf(track) }}</span>
+            </div>
+            <n-button size="tiny" secondary @click="handleUp(track.id)">顶歌</n-button>
+          </div>
+        </div>
+        <n-text v-else depth="3" class="tip">队列还是空的，点歌会自动加进来</n-text>
+      </div>
+
+      <n-flex justify="end" :size="8" class="footer">
+        <n-button size="small" type="error" secondary @click="handleLeave">
+          退出房间
         </n-button>
-        <n-button v-else size="small" secondary @click="handleLeave(false)">退出房间</n-button>
       </n-flex>
     </template>
-  </n-flex>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { useListenTogetherStore } from "@/stores";
+import type { SongType } from "@/types/main";
 import { isLogin } from "@/utils/auth";
 import { copyData } from "@/utils/helper";
 import { msToTime } from "@/utils/time";
@@ -191,7 +185,6 @@ const listenTogetherStore = useListenTogetherStore();
 const creating = ref(false);
 const joining = ref(false);
 const applying = ref(false);
-const syncing = ref(false);
 const inviteLink = ref("");
 
 // 加入表单
@@ -215,6 +208,13 @@ const trackArtists = computed(() => {
   return Array.isArray(artists) ? artists.map((artist) => artist.name).join(" / ") : artists;
 });
 
+// 队列歌曲歌手
+const artistsOf = (track: SongType) => {
+  const artists = track.artists;
+  if (!artists) return "未知歌手";
+  return Array.isArray(artists) ? artists.map((artist) => artist.name).join(" / ") : artists;
+};
+
 // 上次同步时间
 const lastSyncText = computed(() => {
   if (!listenTogetherStore.lastSyncTime) return "";
@@ -233,12 +233,12 @@ const handleCreate = async () => {
   }
 };
 
-// 解析邀请链接
+// 解析邀请链接（兼容多人分享页的 inviterUid）
 const handleInviteInput = (value: string) => {
   if (!value || !value.includes("roomId=")) return;
   const link = value.trim();
   const roomId = link.match(/[?&]roomId=([^&]+)/)?.[1];
-  const inviterId = link.match(/[?&]inviterId=([^&]+)/)?.[1];
+  const inviterId = link.match(/[?&](?:inviterUid|inviterId|inviter)=([^&]+)/)?.[1];
   if (roomId) joinForm.roomId = decodeURIComponent(roomId);
   if (inviterId) joinForm.inviterId = decodeURIComponent(inviterId);
 };
@@ -277,39 +277,76 @@ const handlePushSong = async () => {
   await listenTogetherStore.pushCurrentSong();
 };
 
-// 同步播放列表
-const handlePushPlaylist = async () => {
-  syncing.value = true;
-  try {
-    const count = await listenTogetherStore.syncPlaylistToRoom();
-    if (count > 0) window.$message.success(`已同步 ${count} 首歌曲`);
-  } finally {
-    syncing.value = false;
-  }
+// 顶歌
+const handleUp = async (songId: number) => {
+  await listenTogetherStore.upSong(songId);
+};
+
+// 点赞当前曲目
+const handleLike = async () => {
+  await listenTogetherStore.likeCurrentSong();
+};
+
+// 切歌（需要其他人一起同意）
+const handleSkip = async () => {
+  await listenTogetherStore.requestSkip();
 };
 
 // 离开房间
-const handleLeave = async (close: boolean) => {
-  await listenTogetherStore.leaveRoom(close);
+const handleLeave = async () => {
+  await listenTogetherStore.leaveRoom();
 };
 </script>
 
 <style scoped lang="scss">
 .listen-together {
   width: 100%;
-
-  .divider {
-    margin: 4px 0;
+  .setting-row {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 4px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.14);
+    &.column {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
-
+  .setting-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .setting-label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .setting-desc {
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--n-text-color-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .join-form {
+    width: 100%;
+  }
   .member-list {
+    display: flex;
     flex-wrap: wrap;
+    gap: 14px;
+    padding: 14px 4px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.14);
   }
-
   .member {
-    max-width: 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    width: 64px;
   }
-
   .member-name {
     width: 100%;
     overflow: hidden;
@@ -318,20 +355,74 @@ const handleLeave = async (close: boolean) => {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  .track-info {
-    overflow: hidden;
+  .track {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 6px 0;
   }
-
+  .track-info {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
   .track-name,
   .track-artist {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
+  .track-name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .track-artist,
+  .track-time {
+    font-size: 12px;
+    color: var(--n-text-color-3);
+  }
+  .queue {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+  .queue-item {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.1);
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+  .queue-index {
+    width: 18px;
+    font-size: 12px;
+    color: var(--n-text-color-3);
+    text-align: center;
+  }
+  .queue-name {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-artist {
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--n-text-color-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .tip {
     font-size: 12px;
+    line-height: 1.6;
+  }
+  .footer {
+    margin-top: 12px;
   }
 }
 </style>

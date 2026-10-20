@@ -10,8 +10,11 @@
     <n-drawer-content :native-scrollbar="false" closable>
       <template #header>
         <div class="playlist-header">
-          <n-text class="name">播放队列</n-text>
-          <n-text class="count" depth="3"> {{ dataStore.playList.length }} 首歌曲 </n-text>
+          <n-text class="name">{{ inRoomMode ? "一起听队列" : "播放队列" }}</n-text>
+          <n-text class="count" depth="3">
+            {{ dataStore.playList.length }} 首歌曲
+            <template v-if="inRoomMode"> · 房间歌单，点歌会加入房间</template>
+          </n-text>
         </div>
       </template>
       <Transition name="fade" mode="out-in">
@@ -52,13 +55,13 @@
                 ]"
                 v-debounce="
                   () => {
-                    player.togglePlayIndex(index, true);
-                    statusStore.playListShow = false;
+                    handlePlayIndex(index);
                   }
                 "
               >
                 <!-- 拖拽手柄 -->
                 <div
+                  v-if="!inRoomMode"
                   class="drag-handle"
                   @mousedown="handlePointerDown($event, index, songData.name || '未知曲目')"
                   @touchstart.passive="
@@ -102,7 +105,11 @@
                   </div>
                 </div>
                 <!-- 移除 -->
-                <div class="remove" @click.stop="player.removeSongIndex(index)">
+                <div
+                  v-if="!inRoomMode"
+                  class="remove"
+                  @click.stop="player.removeSongIndex(index)"
+                >
                   <SvgIcon :size="20" name="Delete" />
                 </div>
               </div>
@@ -118,8 +125,8 @@
         />
       </Transition>
       <template #footer>
-        <n-grid :cols="2" x-gap="16" class="playlist-menu">
-          <n-gi>
+        <n-grid :cols="inRoomMode ? 1 : 2" x-gap="16" class="playlist-menu">
+          <n-gi v-if="!inRoomMode">
             <n-button :focusable="false" size="large" strong secondary @click="cleanPlayList">
               <template #icon>
                 <SvgIcon name="DeleteSweep" />
@@ -168,7 +175,7 @@
 <script setup lang="ts">
 import VirtualScroll from "@/components/UI/VirtualScroll.vue";
 import { usePlayerController } from "@/core/player/PlayerController";
-import { useDataStore, useSettingStore, useStatusStore } from "@/stores";
+import { useDataStore, useListenTogetherStore, useSettingStore, useStatusStore } from "@/stores";
 import { removeBrackets } from "@/utils/format";
 import { useDragSort } from "@/composables/List/useDragSort";
 
@@ -176,6 +183,24 @@ const dataStore = useDataStore();
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
 const player = usePlayerController();
+const listenTogetherStore = useListenTogetherStore();
+
+// 一起听模式下播放列表只展示房间歌单
+const inRoomMode = computed(() => listenTogetherStore.inRoomMode);
+
+/** 点击播放：房间模式下是点歌，本地模式下正常播放 */
+const handlePlayIndex = (index: number) => {
+  if (inRoomMode.value) {
+    const songId = dataStore.playList[index]?.id;
+    statusStore.playListShow = false;
+    if (songId && songId !== listenTogetherStore.currentTrackId) {
+      void listenTogetherStore.addSongToRoom(songId);
+    }
+    return;
+  }
+  player.togglePlayIndex(index, true);
+  statusStore.playListShow = false;
+};
 
 const playListRef = ref<InstanceType<typeof VirtualScroll> | null>(null);
 

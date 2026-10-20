@@ -17,7 +17,14 @@
   <!-- 普通封面 -->
   <div
     v-else
-    :class="['player-cover', settingStore.playerType, { playing: statusStore.playStatus }]"
+    :class="[
+      'player-cover',
+      settingStore.playerType,
+      {
+        playing: statusStore.playStatus,
+        'in-room': listenTogetherStore.inRoom,
+      },
+    ]"
   >
     <!-- 指针 -->
     <img
@@ -47,6 +54,20 @@
         @ended="dynamicCoverEnded"
       />
     </Transition>
+    <!-- 一起听成员头像：放在封面上方 -->
+    <div v-if="togetherUsers.length" class="together-avatars">
+      <n-avatar
+        v-for="user in togetherUsers"
+        :key="user.userId"
+        round
+        :size="30"
+        :src="user.avatarUrl || undefined"
+        class="together-avatar"
+      >
+        {{ (user.nickname || "听").slice(0, 1) }}
+      </n-avatar>
+      <span v-if="togetherMore > 0" class="together-more">+{{ togetherMore }}</span>
+    </div>
   </div>
 </template>
 
@@ -54,7 +75,12 @@
 import { songDynamicCover } from "@/api/song";
 import { useMobile } from "@/composables/useMobile";
 import { useBlobURLManager } from "@/core/resource/BlobURLManager";
-import { useSettingStore, useStatusStore, useMusicStore } from "@/stores";
+import {
+  useListenTogetherStore,
+  useSettingStore,
+  useStatusStore,
+  useMusicStore,
+} from "@/stores";
 import { isLogin } from "@/utils/auth";
 import { isElectron } from "@/utils/env";
 import { isEmpty } from "lodash-es";
@@ -62,6 +88,19 @@ import { isEmpty } from "lodash-es";
 const musicStore = useMusicStore();
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
+const listenTogetherStore = useListenTogetherStore();
+
+// 一起听成员头像（最多展示 4 个）
+const togetherUsers = computed(() => {
+  if (!listenTogetherStore.inRoom) return [];
+  return listenTogetherStore.members.slice(0, 4);
+});
+
+// 超出部分人数
+const togetherMore = computed(() => {
+  if (!listenTogetherStore.inRoom) return 0;
+  return Math.max(listenTogetherStore.members.length - 4, 0);
+});
 
 const { isTablet } = useMobile();
 
@@ -379,6 +418,41 @@ onBeforeUnmount(() => {
     object-fit: cover;
     width: 100%;
     height: 100%;
+  }
+}
+
+.together-avatars {
+  position: absolute;
+  top: -58px;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  transform: translateX(-50%);
+  padding: 4px 12px 4px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(14px);
+  .together-avatar {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75);
+    &:not(:first-child) {
+      margin-left: -8px;
+    }
+  }
+  .together-more {
+    margin-left: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.9);
+  }
+}
+
+// 一起听时把封面整体下移，给上方的头像留位置
+.player-cover.in-room {
+  margin-top: 58px;
+  &.record {
+    margin-top: 76px;
   }
 }
 </style>

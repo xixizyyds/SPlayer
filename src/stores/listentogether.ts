@@ -1,17 +1,16 @@
 import {
-  listenTogetherAccept,
-  listenTogetherCheckRoom,
-  listenTogetherCloseRoom,
-  listenTogetherCreateRoom,
-  listenTogetherGetPlaylist,
-  listenTogetherGetStatus,
-  listenTogetherHeartbeat,
-  listenTogetherSyncListCommand,
-  listenTogetherSyncPlayCommand,
-  type ListenTogetherPlayCommandType,
-  type ListenTogetherRoomInfo,
-  type ListenTogetherUser,
-} from "@/api/listentogether";
+  MULTI_SONG_OPERATE,
+  multiListenCreate,
+  multiListenExit,
+  multiListenHeartbeat,
+  multiListenJoin,
+  multiListenOperate,
+  multiListenStatus,
+  type MultiListenPlayInfo,
+  type MultiListenRoomInfo,
+  type MultiListenSnapshot,
+  type MultiListenUserAgg,
+} from "@/api/multilisten";
 import { songDetail } from "@/api/song";
 import { useDataStore } from "./data";
 import { useMusicStore } from "./music";
@@ -23,11 +22,13 @@ import { defineStore } from "pinia";
 import { watch } from "vue";
 
 /** 房间状态刷新间隔（毫秒） */
-const ROOM_REFRESH_INTERVAL = 5000;
-/** 心跳间隔（毫秒） */
-const HEARTBEAT_INTERVAL = 30000;
+const ROOM_REFRESH_INTERVAL = 4000;
+/** 默认心跳间隔（毫秒），服务端会覆盖 */
+const DEFAULT_HEARTBEAT_INTERVAL = 30000;
 /** 应用远端状态后的静默时长（毫秒） */
 const REMOTE_SILENCE_DURATION = 4000;
+/** 进度误差容忍（毫秒） */
+const SEEK_TOLERANCE = 3000;
 
 /** 播放器状态监听 */
 let playerWatchers: Array<ReturnType<typeof watch>> = [];
@@ -36,10 +37,29 @@ let remoteSilenceTimer: number | null = null;
 /** 房间失效提示是否已展示 */
 let offlineNoticeShown = false;
 
+/** 房间在线成员 */
+export interface ListenTogetherUser {
+  userId: number;
+  nickname: string;
+  avatarUrl: string;
+}
+
 interface ListenTogetherState {
+  /** 播放模式：普通播放 / 一起听 */
+  mode: "normal" | "room";
+  /** 普通播放的歌单快照 */
+  normalPlayList: SongType[];
+  /** 普通播放的索引快照 */
+  normalPlayIndex: number;
+  /** 普通播放的歌曲快照 */
+  normalSong: SongType | null;
+  /** 普通播放的进度快照 */
+  normalProgress: number;
+  /** 普通播放是否在播放中 */
+  normalPlaying: boolean;
   /** 房间号 */
   roomId: string;
-  /** 邀请者 ID（房主） */
+  /** 邀请者 ID */
   inviterId: number;
   /** 是否为房主 */
   isCreator: boolean;
@@ -47,6 +67,8 @@ interface ListenTogetherState {
   inRoom: boolean;
   /** 在线成员 */
   members: ListenTogetherUser[];
+  /** 在线人数（服务端口径） */
+  onlineNums: number;
   /** 房间状态文案 */
   roomStatusText: string;
   /** 是否跟随房间播放 */
@@ -55,165 +77,251 @@ interface ListenTogetherState {
   shareSongId: number;
   /** 房间当前曲目 ID */
   currentTrackId: number;
+  /** 房间当前曲目的 bizId，切歌时回传 */
+  currentSongBizId: number;
   /** 房间当前曲目 */
   currentTrack: SongType | null;
-  /** 房间播放状态 */
+  /** 房间播放状态（多人房间不区分暂停，保留给界面展示） */
   remotePlayStatus: "PLAY" | "PAUSE";
   /** 房间播放进度（毫秒） */
   remoteProgress: number;
-  /** 房间播放列表 ID */
+  /** 进度采样时间戳 */
+  progressSampledAt: number;
+  /** 房间曲目总时长（毫秒） */
+  remoteDuration: number;
+  /** 房间歌单（来自 nextSongs） */
   roomTrackIds: number[];
+  /** 房间待播队列（含 bizId） */
+  queueSongs: Array<{ songId: number; bizId: number }>;
+  /** 房间待播队列详情 */
+  queueTracks: SongType[];
+  /** 当前曲目被赞次数 */
+  zanCount: number;
+  /** 队列里待播数量（服务端口径） */
+  waitSongCount: number;
   /** 上次同步时间 */
   lastSyncTime: number;
-  /** 播放列表版本号 */
-  listVersion: number;
-  /** 客户端指令序号 */
-  clientSeq: number;
-  /** 是否正在应用远端状态 */
-  isApplyingRemote: boolean;
   /** 已应用的远端状态标识 */
   appliedRemoteKey: string;
+  /** 是否正在应用远端状态 */
+  isApplyingRemote: boolean;
   /** 房间状态定时器 */
   roomTimer: number | null;
   /** 心跳定时器 */
   heartbeatTimer: number | null;
+  /** 服务端下发的心跳间隔（毫秒） */
+  heartbeatDuration: number;
   /** 是否正在刷新房间 */
   refreshing: boolean;
-  /** 房间状态查询计数 */
-  roomCheckTick: number;
 }
 
-/** 转为对象 */
-const asRecord = (value: unknown): Record<string, unknown> => {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-};
-
-/** 转为歌曲 ID */
-const toTrackId = (value: unknown): number => {
+/** 转为数字 ID */
+const toId = (value: unknown): number => {
   if (value === undefined || value === null || value === "") return 0;
   const id = Number(value);
   return Number.isFinite(id) && id > 0 ? id : 0;
 };
 
-/** 标准化在线成员 */
-const normalizeMembers = (roomInfo: ListenTogetherRoomInfo): ListenTogetherUser[] => {
-  const raw = roomInfo.roomUsers ?? (roomInfo as Record<string, unknown>).users;
-  const list = Array.isArray(raw) ? raw : [];
-  const members = list
-    .map((item) => {
-      const record = asRecord(item);
-      const userId = toTrackId(record.userId ?? record.id);
-      const nickname = String(
-        record.nickName ?? record.nickname ?? record.name ?? record.userName ?? "",
-      );
-      const avatarUrl = String(record.avatarUrl ?? record.avatar ?? record.picUrl ?? "");
-      return { userId, nickname, avatarUrl };
-    })
-    .filter((item) => item.userId > 0);
-  // 去重
-  return [...new Map(members.map((item) => [item.userId, item])).values()];
+/** 读取房间当前播放信息 */
+const readPlayInfo = (snapshot: MultiListenSnapshot): MultiListenPlayInfo => {
+  return snapshot.roomPlaySongInfo ?? {};
 };
 
-/** 解析房间播放信息 */
-const readRoomPlayback = (roomInfo: ListenTogetherRoomInfo) => {
-  const playing = asRecord(roomInfo.playingInfo);
-  const trackId = toTrackId(
-    roomInfo.songId ?? roomInfo.trackId ?? playing.songId ?? playing.trackId,
-  );
-  const rawStatus = String(
-    roomInfo.playStatus ?? playing.playStatus ?? playing.status ?? "",
-  ).toUpperCase();
-  const playStatus: "PLAY" | "PAUSE" | undefined =
-    rawStatus === "PAUSE" ? "PAUSE" : rawStatus === "PLAY" ? "PLAY" : undefined;
-  const progress = Number(roomInfo.progress ?? playing.progress ?? playing.currentTime);
-  return {
-    trackId,
-    playStatus,
-    progress: Number.isFinite(progress) && progress >= 0 ? progress : 0,
-  };
-};
-
-/** 房间状态文案 */
-const formatRoomStatus = (status?: string): string => {
-  switch (status) {
-    case "AVAILABLE":
-      return "房间可用";
-    case "ROOM_NOT_FOUND":
-      return "房间不存在";
-    case "ROOM_CLOSED":
-      return "房间已关闭";
-    default:
-      return status ? `房间状态：${status}` : "";
-  }
+/** 估算当前进度 */
+const readProgress = (playInfo: MultiListenPlayInfo): number => {
+  const played = Number(playInfo.playedTime ?? 0);
+  return Number.isFinite(played) && played > 0 ? played : 0;
 };
 
 export const useListenTogetherStore = defineStore("listenTogether", {
   state: (): ListenTogetherState => ({
+    mode: "normal",
+    normalPlayList: [],
+    normalPlayIndex: 0,
+    normalSong: null,
+    normalProgress: 0,
+    normalPlaying: false,
     roomId: "",
     inviterId: 0,
     isCreator: false,
     inRoom: false,
     members: [],
+    onlineNums: 0,
     roomStatusText: "",
     followEnabled: true,
     shareSongId: 0,
     currentTrackId: 0,
+    currentSongBizId: 0,
     currentTrack: null,
     remotePlayStatus: "PLAY",
     remoteProgress: 0,
+    progressSampledAt: 0,
+    remoteDuration: 0,
     roomTrackIds: [],
+    queueSongs: [],
+    queueTracks: [],
+    zanCount: 0,
+    waitSongCount: 0,
     lastSyncTime: 0,
-    listVersion: 0,
-    clientSeq: 0,
-    isApplyingRemote: false,
     appliedRemoteKey: "",
+    isApplyingRemote: false,
     roomTimer: null,
     heartbeatTimer: null,
+    heartbeatDuration: DEFAULT_HEARTBEAT_INTERVAL,
     refreshing: false,
-    roomCheckTick: 0,
   }),
   getters: {
-    /** 邀请链接 */
+    /** 邀请链接（官方多人分享页） */
     shareLink(state): string {
       if (!state.roomId) return "";
-      const songId = state.shareSongId || state.currentTrackId || 0;
-      return `https://st.music.163.com/listen-together/share/?songId=${songId}&roomId=${state.roomId}&inviterId=${state.inviterId}`;
+      const uid = state.inviterId || useDataStore().userData.userId || 0;
+      return `https://st.music.163.com/listen-together/multishare/index.html?roomId=${encodeURIComponent(state.roomId)}&inviterUid=${uid}&isFLT=false`;
     },
     /** 在线人数 */
     memberCount(state): number {
-      return state.members.length;
+      return state.members.length || state.onlineNums;
+    },
+    /** 一起听模式的完整歌单：当前曲目 + 待播队列 */
+    roomPlayList(state): SongType[] {
+      const list: SongType[] = [];
+      if (state.currentTrack) list.push(state.currentTrack);
+      for (const track of state.queueTracks) {
+        if (track.id !== state.currentTrackId) list.push(track);
+      }
+      return list;
+    },
+    /** 是否处于一起听模式 */
+    inRoomMode(state): boolean {
+      return state.mode === "room";
     },
   },
   actions: {
-    /** 创建房间 */
+    /** 进入一起听模式：备份普通播放状态，切到房间歌单 */
+    enterRoomMode() {
+      if (this.mode === "room") return;
+      const dataStore = useDataStore();
+      const statusStore = useStatusStore();
+      const musicStore = useMusicStore();
+      this.normalPlayList = dataStore.playList.map((song) => ({ ...song }));
+      this.normalPlayIndex = statusStore.playIndex;
+      this.normalSong = musicStore.playSong?.id ? { ...musicStore.playSong } : null;
+      this.normalPlaying = statusStore.playStatus;
+      this.normalProgress = 0;
+      import("@/core/player/PlayerController")
+        .then(({ usePlayerController }) => {
+          this.normalProgress = usePlayerController().getSeek() || 0;
+        })
+        .catch(() => undefined);
+      this.mode = "room";
+    },
+    /** 把房间歌单同步到播放器队列，一起听时播放列表只显示房间歌曲 */
+    syncRoomPlayList() {
+      if (this.mode !== "room") return;
+      const dataStore = useDataStore();
+      const statusStore = useStatusStore();
+      const list = this.roomPlayList;
+      if (!list.length) return;
+      const key = list.map((song) => song.id).join(",");
+      const oldKey = dataStore.playList.map((song) => song.id).join(",");
+      if (key !== oldKey) dataStore.playList = list;
+      const index = list.findIndex((song) => song.id === this.currentTrackId);
+      if (index >= 0 && statusStore.playIndex !== index) statusStore.playIndex = index;
+    },
+    /** 退出一起听模式：还原普通播放的歌单与进度 */
+    restoreNormalMode() {
+      if (this.mode !== "room") return;
+      this.mode = "normal";
+      const dataStore = useDataStore();
+      const statusStore = useStatusStore();
+      if (this.normalPlayList.length) {
+        dataStore.playList = this.normalPlayList.map((song) => ({ ...song }));
+        const index = Math.min(this.normalPlayIndex, dataStore.playList.length - 1);
+        statusStore.playIndex = Math.max(index, 0);
+      }
+      const song = this.normalSong;
+      if (song?.id) {
+        import("@/core/player/PlayerController")
+          .then(({ usePlayerController }) => {
+            return usePlayerController().playSong({
+              song,
+              seek: this.normalProgress,
+              autoPlay: this.normalPlaying,
+            });
+          })
+          .catch(() => undefined);
+      }
+      this.normalPlayList = [];
+      this.normalSong = null;
+      this.normalProgress = 0;
+    },
+    /** 给房间当前播放的歌曲点个赞 */
+    async likeCurrentSong() {
+      if (!this.inRoom || !this.roomId || !this.currentTrackId) return false;
+      try {
+        const result = await multiListenOperate({
+          roomId: this.roomId,
+          songId: this.currentTrackId,
+          bizId: this.currentSongBizId || 0,
+          operate: MULTI_SONG_OPERATE.LIKE,
+        });
+        if (!result || result.code !== 200) {
+          window.$message.warning(result?.message || "点赞失败");
+          return false;
+        }
+        this.zanCount += 1;
+        window.$message.success("已点赞");
+        return true;
+      } catch (error) {
+        console.warn("一起听点赞失败：", error);
+        return false;
+      }
+    },
+    /** 创建多人一起听房间 */
     async createRoom() {
       if (!isLogin()) {
         window.$message.warning("请先登录网易云账号");
         return false;
       }
       const musicStore = useMusicStore();
+      const songId = musicStore.playSong.id;
+      if (!songId) {
+        window.$message.warning("请先播放一首歌曲再创建房间");
+        return false;
+      }
       try {
-        const result = await listenTogetherCreateRoom();
-        const roomInfo = result?.data?.roomInfo;
-        if (result?.code !== 200 || !roomInfo?.roomId) {
+        const result = await multiListenCreate(songId);
+        if (!result || result.code !== 200) {
           window.$message.error(result?.message || "创建一起听房间失败");
           return false;
         }
-        this.roomId = String(roomInfo.roomId);
-        this.inviterId = Number(roomInfo.creatorId || useDataStore().userData.userId || 0);
-        this.isCreator = true;
+        // 创建接口只回 success，房间信息统一从状态快照里取
+        const status = await multiListenStatus();
+        const snapshot = status?.data?.multiLtRoomSnapshot;
+        if (!snapshot?.roomId) {
+          window.$message.error(result.message || "创建一起听房间失败");
+          return false;
+        }
+        this.roomId = snapshot.roomId;
+        this.inviterId =
+          Number(snapshot.multiRoomInfoDTO?.creatorId) ||
+          Number(useDataStore().userData.userId) ||
+          0;
         this.inRoom = true;
         this.followEnabled = true;
-        this.shareSongId = musicStore.playSong.id;
-        this.currentTrackId = musicStore.playSong.id;
-        this.currentTrack = musicStore.playSong.id ? musicStore.playSong : null;
+        this.shareSongId = songId;
+        this.currentTrackId = 0;
+        this.currentSongBizId = 0;
+        this.currentTrack = null;
+        this.remoteProgress = 0;
+        this.remoteDuration = 0;
         this.appliedRemoteKey = "";
         offlineNoticeShown = false;
+        this.enterRoomMode();
+        this.applySnapshot(snapshot, true);
         this.startTimers();
         this.startPlayerWatchers();
-        await this.refreshRoom(true);
-        await this.syncPlaylistToRoom();
         window.$message.success("一起听房间已创建");
+        void this.syncPlaylistToRoom();
         return true;
       } catch (error) {
         console.error("创建一起听房间失败：", error);
@@ -222,7 +330,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       }
     },
     /**
-     * 加入房间
+     * 加入多人房间
      * @param roomId 房间号
      * @param inviterId 邀请者 ID
      */
@@ -238,27 +346,39 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         return false;
       }
       try {
-        const result = await listenTogetherAccept(safeRoomId, safeInviterId);
+        const result = await multiListenJoin(safeRoomId, safeInviterId);
         if (!result || result.code !== 200) {
           window.$message.error(result?.message || "加入一起听房间失败");
           return false;
         }
-        this.roomId = safeRoomId;
+        // 加入接口返回 { success, multiLtRoomSnapshot }
+        const payload = (result.data ?? {}) as unknown as {
+          success?: boolean;
+          multiLtRoomSnapshot?: MultiListenSnapshot;
+        };
+        const snapshot = payload.multiLtRoomSnapshot;
+        if (payload.success !== true || !snapshot?.roomId) {
+          window.$message.error("加入房间失败，请确认房间仍然有效");
+          return false;
+        }
+        this.roomId = snapshot.roomId || safeRoomId;
         this.inviterId = safeInviterId;
-        this.isCreator = useDataStore().userData.userId === safeInviterId;
         this.inRoom = true;
         this.followEnabled = true;
         this.shareSongId = useMusicStore().playSong.id;
         this.currentTrackId = 0;
+        this.currentSongBizId = 0;
         this.currentTrack = null;
         this.remoteProgress = 0;
+        this.remoteDuration = 0;
         this.appliedRemoteKey = "";
         offlineNoticeShown = false;
+        this.enterRoomMode();
+        this.applySnapshot(snapshot, true);
         this.startTimers();
         this.startPlayerWatchers();
-        await this.refreshRoom(true);
-        await this.fetchRoomPlaylist();
         window.$message.success("已加入一起听房间");
+        void this.syncPlaylistToRoom();
         return true;
       } catch (error) {
         console.error("加入一起听房间失败：", error);
@@ -268,44 +388,50 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     },
     /**
      * 离开房间
-     * @param close 是否关闭房间（仅房主）
+     * @param close 是否关闭房间（多人房间交由服务端判断）
      */
     async leaveRoom(close = false) {
+      void close;
       const roomId = this.roomId;
-      const canClose = close && this.isCreator && !!roomId;
       this.stopTimers();
       this.stopPlayerWatchers();
-      if (canClose) {
+      if (roomId) {
         try {
-          const result = await listenTogetherCloseRoom(roomId);
-          if (!result || result.code !== 200) {
-            window.$message.warning("关闭一起听房间失败，已本地退出");
-          }
+          await multiListenExit(roomId);
         } catch (error) {
-          console.warn("关闭一起听房间失败：", error);
+          console.warn("退出一起听房间失败：", error);
         }
       }
       this.resetRoom();
-      window.$message.success(canClose ? "一起听房间已关闭" : "已退出一起听房间");
+      window.$message.success("已退出一起听房间");
     },
     /** 重置房间状态 */
     resetRoom() {
+      this.restoreNormalMode();
       this.roomId = "";
       this.inviterId = 0;
       this.isCreator = false;
       this.inRoom = false;
       this.members = [];
+      this.onlineNums = 0;
       this.roomStatusText = "";
       this.followEnabled = true;
       this.shareSongId = 0;
       this.currentTrackId = 0;
+      this.currentSongBizId = 0;
       this.currentTrack = null;
       this.remotePlayStatus = "PLAY";
       this.remoteProgress = 0;
+      this.progressSampledAt = 0;
+      this.progressSampledAt = 0;
+      this.remoteDuration = 0;
       this.roomTrackIds = [];
+      this.queueSongs = [];
+      this.queueTracks = [];
+      this.zanCount = 0;
+      this.waitSongCount = 0;
       this.lastSyncTime = 0;
       this.appliedRemoteKey = "";
-      this.roomCheckTick = 0;
       this.isApplyingRemote = false;
       this.refreshing = false;
     },
@@ -315,10 +441,17 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       this.roomTimer = window.setInterval(() => {
         void this.refreshRoom();
       }, ROOM_REFRESH_INTERVAL);
+      this.restartHeartbeat();
+      void this.sendHeartbeat();
+    },
+    /** 按服务端下发间隔重启心跳 */
+    restartHeartbeat() {
+      if (this.heartbeatTimer !== null) {
+        window.clearInterval(this.heartbeatTimer);
+      }
       this.heartbeatTimer = window.setInterval(() => {
         void this.sendHeartbeat();
-      }, HEARTBEAT_INTERVAL);
-      void this.sendHeartbeat();
+      }, this.heartbeatDuration);
     },
     /** 停止房间定时任务 */
     stopTimers() {
@@ -331,26 +464,17 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         this.heartbeatTimer = null;
       }
     },
-    /** 监听播放器状态变化 */
+    /** 监听播放器切歌 */
     startPlayerWatchers() {
       this.stopPlayerWatchers();
-      const statusStore = useStatusStore();
       const musicStore = useMusicStore();
       playerWatchers.push(
         watch(
           () => musicStore.playSong.id,
           (newId, oldId) => {
-            if (!this.inRoom || !this.followEnabled || this.isApplyingRemote) return;
-            if (!newId || newId === oldId) return;
-            void this.reportPlayState("GOTO", { songId: newId, progress: 0 });
-          },
-        ),
-        watch(
-          () => statusStore.playStatus,
-          (playing, wasPlaying) => {
-            if (!this.inRoom || !this.followEnabled || this.isApplyingRemote) return;
-            if (playing === wasPlaying) return;
-            void this.reportPlayState(playing ? "PLAY" : "PAUSE");
+            if (!this.inRoom || this.isApplyingRemote) return;
+            if (!newId || newId === oldId || newId === this.currentTrackId) return;
+            void this.addLocalSongToRoom(newId);
           },
         ),
       );
@@ -360,36 +484,22 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       playerWatchers.forEach((stop) => stop());
       playerWatchers = [];
     },
-    /**
-     * 刷新房间状态
-     * @param force 是否强制应用远端播放状态
-     */
+    /** 刷新房间状态 */
     async refreshRoom(force = false) {
-      if (!this.inRoom || !this.roomId || this.refreshing) return;
+      if (!this.inRoom || this.refreshing) return;
       this.refreshing = true;
       try {
-        const result = await listenTogetherGetStatus();
-        if (!result) return;
-        const data = result.data;
-        if (result.code !== 200 || !data || data.inRoom === false) {
-          this.handleRoomOffline(result.message || "一起听房间已失效");
+        const result = await multiListenStatus();
+        if (!result || result.code !== 200) {
+          if (result?.code === 488) this.handleRoomOffline(result.message || "一起听房间已失效");
           return;
         }
-        const roomInfo = data.roomInfo ?? {};
-        this.members = normalizeMembers(roomInfo);
-        this.lastSyncTime = Date.now();
-        // 定时校验房间是否仍然可用
-        this.roomCheckTick += 1;
-        if (this.roomCheckTick % 3 === 0) {
-          const check = await listenTogetherCheckRoom(this.roomId);
-          this.roomStatusText = formatRoomStatus(check?.data?.status);
-          const status = check?.data?.status;
-          if (status === "ROOM_NOT_FOUND" || status === "ROOM_CLOSED") {
-            this.handleRoomOffline(check?.data?.copywriting || "一起听房间已关闭");
-            return;
-          }
+        const snapshot = result.data?.multiLtRoomSnapshot;
+        if (!snapshot) {
+          this.handleRoomOffline(result.data?.leaveRoomTitle || "一起听房间已失效");
+          return;
         }
-        await this.applyRoomPlayback(roomInfo, force);
+        this.applySnapshot(snapshot, force);
       } catch (error) {
         console.warn("刷新一起听房间失败：", error);
       } finally {
@@ -397,70 +507,278 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       }
     },
     /**
-     * 应用房间播放状态
-     * @param roomInfo 房间信息
-     * @param force 是否强制执行
+     * 应用房间快照
+     * @param snapshot 房间快照
+     * @param force 是否强制对齐播放进度
      */
-    async applyRoomPlayback(roomInfo: ListenTogetherRoomInfo, force = false) {
-      const { trackId, playStatus, progress } = readRoomPlayback(roomInfo);
-      if (!trackId) return;
-      this.currentTrackId = trackId;
-      if (playStatus) this.remotePlayStatus = playStatus;
-      if (progress > 0) this.remoteProgress = progress;
-      await this.loadTrackInfo(trackId);
+    applySnapshot(snapshot: MultiListenSnapshot, force = false) {
+      const roomInfo: MultiListenRoomInfo = snapshot.multiRoomInfoDTO ?? {};
+      const userAgg: MultiListenUserAgg = snapshot.multiLtRoomUserAgg ?? {};
+      const playInfo = readPlayInfo(snapshot);
+      const dataStore = useDataStore();
+
+      this.roomId = snapshot.roomId || this.roomId;
+      if (roomInfo.creatorId) {
+        this.inviterId = Number(roomInfo.creatorId) || this.inviterId;
+        this.isCreator = Number(roomInfo.creatorId) === dataStore.userData.userId;
+      }
+      this.roomStatusText = roomInfo.roomClosed ? "房间已关闭" : "房间可用";
+      this.members = (userAgg.onlineUserInfos ?? [])
+        .map((user) => ({
+          userId: toId(user.uid),
+          nickname: user.nickname ?? "",
+          avatarUrl: user.avatar ?? "",
+        }))
+        .filter((user) => user.userId > 0);
+      this.onlineNums = Number(userAgg.onlineNums ?? this.members.length);
+      this.lastSyncTime = Date.now();
+      this.zanCount = Number(playInfo.playingSongZanCnt ?? this.zanCount) || 0;
+      this.waitSongCount = Number(playInfo.waitSongCount ?? this.waitSongCount) || 0;
+
+      const playSong = playInfo.playSong;
+      const trackId = toId(playSong?.songId);
+      if (trackId) {
+        this.currentSongBizId = toId(playSong?.songBizId);
+        this.remoteProgress = readProgress(playInfo);
+        this.progressSampledAt = Date.now();
+        this.remoteDuration = Number(playInfo.songDuration ?? 0) || this.remoteDuration;
+        this.setQueue(
+          (playInfo.nextSongs ?? []).map((song) => ({
+            songId: toId(song.songId),
+            bizId: toId(song.songBizId),
+          })),
+        );
+        const isNewTrack = trackId !== this.currentTrackId;
+        this.currentTrackId = trackId;
+        if (isNewTrack) void this.loadTrackInfo(trackId);
+        void this.applyPlayback(trackId, this.remoteProgress, force || isNewTrack);
+      }
+      this.syncRoomPlayList();
+
+      if (roomInfo.roomClosed) {
+        this.handleRoomOffline("房间已关闭");
+      }
+    },
+    /**
+     * 对齐播放器到房间状态
+     * @param trackId 曲目 ID
+     * @param progress 目标进度（毫秒）
+     * @param force 是否强制跟唱
+     */
+    async applyPlayback(trackId: number, progress: number, force = false) {
       if (!this.followEnabled) return;
-      const key = `${trackId}:${playStatus ?? ""}:${Math.floor(progress / 5000)}`;
+      const key = `${trackId}:${Math.floor(progress / 5000)}`;
       if (!force && key === this.appliedRemoteKey) return;
-      this.appliedRemoteKey = key;
-      this.isApplyingRemote = true;
       try {
         const { usePlayerController } = await import("@/core/player/PlayerController");
         const player = usePlayerController();
         const musicStore = useMusicStore();
-        const shouldPlay = (playStatus ?? this.remotePlayStatus) !== "PAUSE";
-        if (musicStore.playSong.id !== trackId) {
-          const song = this.currentTrack ?? (await this.loadTrackInfo(trackId));
+        const needSwitch = musicStore.playSong.id !== trackId;
+        const needSeek = !needSwitch && Math.abs(player.getSeek() - progress) > SEEK_TOLERANCE;
+        this.appliedRemoteKey = key;
+        if (!needSwitch && !needSeek) return;
+        this.isApplyingRemote = true;
+        if (needSwitch) {
+          const song = this.currentTrack?.id === trackId
+            ? this.currentTrack
+            : await this.loadTrackInfo(trackId);
           if (song) {
-            await player.playSong({ song, seek: progress, autoPlay: shouldPlay });
+            await player.playSong({ song, seek: progress, autoPlay: true });
           }
         } else {
-          if (shouldPlay) await player.play();
-          else await player.pause();
-          if (progress > 0 && Math.abs(player.getSeek() - progress) > 3000) {
-            player.setSeek(progress);
-          }
+          player.setSeek(progress);
         }
+        this.holdRemoteSilence();
       } catch (error) {
         console.warn("应用一起听播放状态失败：", error);
-      } finally {
-        this.holdRemoteSilence();
+        this.isApplyingRemote = false;
       }
     },
-    /** 应用一次当前房间播放状态 */
+    /** 手动对齐一次房间播放状态 */
     async applyRoomPlaybackNow() {
-      const result = await listenTogetherGetStatus();
-      const roomInfo = result?.data?.roomInfo;
-      if (!roomInfo) {
+      const result = await multiListenStatus();
+      const snapshot = result?.data?.multiLtRoomSnapshot;
+      if (!snapshot) {
         window.$message.warning("暂未获取到房间播放信息");
         return;
       }
-      await this.applyRoomPlayback(roomInfo, true);
+      this.applySnapshot(snapshot, true);
       window.$message.success("已同步房间播放状态");
     },
     /** 推送当前歌曲到房间 */
     async pushCurrentSong() {
       if (!this.inRoom) return;
       const musicStore = useMusicStore();
-      const statusStore = useStatusStore();
-      if (!musicStore.playSong.id) {
+      const songId = musicStore.playSong.id;
+      if (!songId) {
         window.$message.warning("当前没有播放中的歌曲");
         return;
       }
-      await this.reportPlayState("GOTO", {
-        songId: musicStore.playSong.id,
-        progress: statusStore.currentTime,
-      });
-      window.$message.success("已推送当前歌曲");
+      if (songId === this.currentTrackId) {
+        window.$message.info("房间正在播放这首歌");
+        return;
+      }
+      await this.addSongToRoom(songId);
+    },
+    /**
+     * 本地点歌：只加入房间歌单，不打断房间正在播放的歌
+     * @param songId 歌曲 ID
+     */
+    async addLocalSongToRoom(songId: number) {
+      if (!this.inRoom || !this.roomId || !songId) return false;
+      const ok = await this.addSongToRoom(songId, true);
+      window.$message.success(ok ? "已加入一起听歌单" : "加入一起听歌单失败");
+      await this.restoreRoomPlayback();
+      return ok;
+    },
+    /**
+     * 往房间队列追加一首歌
+     * @param songId 歌曲 ID
+     * @param silent 是否静默
+     */
+    async addSongToRoom(songId: number, silent = false) {
+      if (!this.inRoom || !this.roomId || !songId) return false;
+      try {
+        const result = await multiListenOperate({
+          roomId: this.roomId,
+          songId,
+          bizId: 0,
+          operate: MULTI_SONG_OPERATE.ADD,
+        });
+        const data = result?.data;
+        const failed =
+          data?.result === false ||
+          (typeof data?.failedCode === "number" && data.failedCode !== 0);
+        if (!result || result.code !== 200 || failed) {
+          if (!silent) {
+            window.$message.warning(data?.failedMsg || result?.message || "加入房间歌单失败");
+          }
+          return false;
+        }
+        if (data?.roomSongInfo?.nextSongs) {
+          this.setQueue(
+            data.roomSongInfo.nextSongs.map((song) => ({
+              songId: toId(song.songId),
+              bizId: toId(song.songBizId),
+            })),
+          );
+        }
+        if (!silent) window.$message.success("已加入房间歌单");
+        return true;
+      } catch (error) {
+        console.warn("加入一起听歌单失败：", error);
+        if (!silent) window.$message.warning("加入房间歌单失败");
+        return false;
+      }
+    },
+    /** 把本地播放器拉回房间当前曲目与进度 */
+    async restoreRoomPlayback() {
+      if (!this.followEnabled || !this.currentTrackId) return;
+      const elapsed = this.progressSampledAt ? Date.now() - this.progressSampledAt : 0;
+      const progress = this.remoteProgress + Math.max(elapsed, 0);
+      this.appliedRemoteKey = "";
+      await this.applyPlayback(this.currentTrackId, progress, true);
+    },
+    /**
+     * 更新房间待播队列
+     * @param list 队列条目
+     */
+    setQueue(list: Array<{ songId: number; bizId: number }>) {
+      const queue = list.filter((item) => item.songId > 0);
+      const key = queue.map((item) => `${item.songId}:${item.bizId}`).join(",");
+      const oldKey = this.queueSongs.map((item) => `${item.songId}:${item.bizId}`).join(",");
+      this.queueSongs = queue;
+      this.roomTrackIds = queue.map((item) => item.songId);
+      if (key !== oldKey) void this.fetchQueueTracks();
+    },
+    /** 拉取队列歌曲详情 */
+    async fetchQueueTracks() {
+      const ids = this.queueSongs.map((item) => item.songId);
+      if (!ids.length) {
+        this.queueTracks = [];
+        return;
+      }
+      try {
+        const result = await songDetail(ids);
+        this.queueTracks = formatSongsList(result?.songs ?? []);
+        this.syncRoomPlayList();
+      } catch (error) {
+        console.warn("获取一起听队列失败：", error);
+      }
+    },
+    /**
+     * 顶歌：把队列里的歌提到更靠前的位置
+     * @param songId 歌曲 ID
+     */
+    async upSong(songId: number) {
+      if (!this.inRoom || !this.roomId) return false;
+      const target = this.queueSongs.find((item) => item.songId === songId);
+      if (!target?.bizId) {
+        window.$message.warning("这首歌不在房间队列里");
+        return false;
+      }
+      try {
+        const result = await multiListenOperate({
+          roomId: this.roomId,
+          songId,
+          bizId: target.bizId,
+          operate: MULTI_SONG_OPERATE.UP,
+        });
+        const data = result?.data;
+        const failed =
+          data?.result === false ||
+          (typeof data?.failedCode === "number" && data.failedCode !== 0);
+        if (!result || result.code !== 200 || failed) {
+          window.$message.warning(data?.failedMsg || "顶歌失败");
+          return false;
+        }
+        if (data?.roomSongInfo?.nextSongs) {
+          this.setQueue(
+            data.roomSongInfo.nextSongs.map((song) => ({
+              songId: toId(song.songId),
+              bizId: toId(song.songBizId),
+            })),
+          );
+        }
+        window.$message.success("已顶歌");
+        return true;
+      } catch (error) {
+        console.warn("顶歌失败：", error);
+        return false;
+      }
+    },
+    /**
+     * 发起切歌，服务端按「不想听」的人数决定是否真的切换
+     */
+    async requestSkip() {
+      if (!this.inRoom || !this.roomId || !this.currentTrackId) return false;
+      try {
+        const result = await multiListenOperate({
+          roomId: this.roomId,
+          songId: this.currentTrackId,
+          bizId: this.currentSongBizId || 0,
+          operate: MULTI_SONG_OPERATE.SWITCH,
+        });
+        if (!result || result.code !== 200) {
+          window.$message.warning(result?.message || "切歌请求失败");
+          return false;
+        }
+        const data = result.data;
+        const failed =
+          data?.result === false ||
+          (typeof data?.failedCode === "number" && data.failedCode !== 0);
+        if (failed) {
+          window.$message.info(data?.failedMsg || "还没凑够人同意切歌");
+          return false;
+        }
+        window.$message.success(data?.failedMsg || "切歌成功");
+        this.appliedRemoteKey = "";
+        await this.refreshRoom(true);
+        return true;
+      } catch (error) {
+        console.warn("切歌失败：", error);
+        return false;
+      }
     },
     /** 远端状态静默期，避免同步回环 */
     holdRemoteSilence() {
@@ -472,110 +790,62 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         remoteSilenceTimer = null;
       }, REMOTE_SILENCE_DURATION);
     },
-    /**
-     * 上报播放状态
-     * @param commandType 指令类型
-     * @param options 附加参数
-     */
-    async reportPlayState(
-      commandType: ListenTogetherPlayCommandType,
-      options: { songId?: number; progress?: number; playStatus?: "PLAY" | "PAUSE" } = {},
-    ) {
-      if (!this.inRoom || !this.roomId || this.isApplyingRemote) return;
-      const statusStore = useStatusStore();
-      const musicStore = useMusicStore();
-      const songId = options.songId ?? musicStore.playSong.id;
-      if (!songId) return;
-      const playStatus = options.playStatus ?? (statusStore.playStatus ? "PLAY" : "PAUSE");
-      const progress = Math.floor(options.progress ?? statusStore.currentTime);
-      this.clientSeq += 1;
-      this.currentTrackId = songId;
-      this.remotePlayStatus = playStatus;
-      this.remoteProgress = progress;
-      if (this.currentTrack?.id !== songId) {
-        void this.loadTrackInfo(songId);
-      }
-      try {
-        await listenTogetherSyncPlayCommand({
-          roomId: this.roomId,
-          commandType,
-          progress,
-          playStatus,
-          formerSongId: "-1",
-          targetSongId: String(songId),
-          clientSeq: this.clientSeq,
-        });
-        this.lastSyncTime = Date.now();
-      } catch (error) {
-        console.warn("同步一起听播放状态失败：", error);
-      }
-    },
-    /** 发送心跳 */
+    /** 发送心跳，顺带校正进度 */
     async sendHeartbeat() {
       if (!this.inRoom || !this.roomId) return;
-      const statusStore = useStatusStore();
-      const musicStore = useMusicStore();
-      const songId = musicStore.playSong.id || this.currentTrackId;
-      if (!songId) return;
       try {
-        await listenTogetherHeartbeat({
-          roomId: this.roomId,
-          songId,
-          playStatus: statusStore.playStatus ? "PLAY" : "PAUSE",
-          progress: Math.floor(statusStore.currentTime),
-        });
+        const result = await multiListenHeartbeat(this.roomId);
+        if (result?.code === 488) {
+          this.handleRoomOffline(result.message || "一起听房间已失效");
+          return;
+        }
+        const data = result?.data;
+        if (!data) return;
+        const playInfo = data.roomPlaySongInfo;
+        if (playInfo) {
+          const trackId = toId(playInfo.playSong?.songId);
+          if (trackId) {
+            this.currentSongBizId = toId(playInfo.playSong?.songBizId) || this.currentSongBizId;
+            this.remoteProgress = readProgress(playInfo);
+            this.progressSampledAt = Date.now();
+            this.remoteDuration = Number(playInfo.songDuration ?? 0) || this.remoteDuration;
+            if (trackId !== this.currentTrackId) {
+              this.currentTrackId = trackId;
+              await this.loadTrackInfo(trackId);
+              await this.applyPlayback(trackId, this.remoteProgress);
+            }
+          }
+        }
+        const duration = Number(data.heartBeatDuration ?? 0);
+        if (duration > 0 && duration * 1000 !== this.heartbeatDuration) {
+          this.heartbeatDuration = duration * 1000;
+          this.restartHeartbeat();
+        }
         this.lastSyncTime = Date.now();
       } catch (error) {
         console.warn("一起听心跳失败：", error);
       }
     },
-    /** 同步当前播放列表到房间 */
-    async syncPlaylistToRoom() {
+    /**
+     * 把本地播放列表并入房间歌单
+     * @param limit 单次最多补充的歌曲数
+     */
+    async syncPlaylistToRoom(limit = 30) {
       if (!this.inRoom || !this.roomId) return 0;
       const dataStore = useDataStore();
-      const userId = dataStore.userData.userId;
       const ids = dataStore.playList.map((song) => song.id).filter((id) => id > 0);
-      if (!ids.length || !userId) {
-        window.$message.warning("当前播放列表为空，暂无法同步");
-        return 0;
+      const known = new Set([this.currentTrackId, ...this.roomTrackIds]);
+      const pending = [...new Set(ids)].filter((id) => !known.has(id)).slice(0, limit);
+      if (!pending.length) return 0;
+      let added = 0;
+      for (const id of pending) {
+        if (await this.addSongToRoom(id, true)) added += 1;
+        await new Promise((resolve) => setTimeout(resolve, 120));
       }
-      const list = ids.join(",");
-      this.listVersion += 1;
-      try {
-        const result = await listenTogetherSyncListCommand({
-          roomId: this.roomId,
-          commandType: "REPLACE",
-          userId,
-          version: this.listVersion,
-          displayList: list,
-          randomList: list,
-        });
-        if (!result || result.code !== 200) {
-          window.$message.warning(result?.message || "同步播放列表失败");
-          return 0;
-        }
-        this.roomTrackIds = ids;
-        this.lastSyncTime = Date.now();
-        return ids.length;
-      } catch (error) {
-        console.warn("同步一起听播放列表失败：", error);
-        return 0;
+      if (added > 0) {
+        window.$message.success(`已向房间歌单补充 ${added} 首`);
       }
-    },
-    /** 获取房间播放列表 */
-    async fetchRoomPlaylist() {
-      if (!this.inRoom || !this.roomId) return;
-      try {
-        const result = await listenTogetherGetPlaylist(this.roomId);
-        const displayList = result?.data?.playlist?.displayList;
-        const raw = Array.isArray(displayList) ? displayList : displayList?.result;
-        const ids = (Array.isArray(raw) ? raw : [])
-          .map((id) => toTrackId(id))
-          .filter((id) => id > 0);
-        this.roomTrackIds = [...new Set(ids)];
-      } catch (error) {
-        console.warn("获取一起听播放列表失败：", error);
-      }
+      return added;
     },
     /**
      * 加载歌曲信息
@@ -584,9 +854,12 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     async loadTrackInfo(trackId: number): Promise<SongType | null> {
       if (this.currentTrack?.id === trackId) return this.currentTrack;
       try {
-        const result = await songDetail(trackId);
+      const result = await songDetail(trackId);
         const song = formatSongsList(result?.songs ?? [])[0] ?? null;
-        if (song) this.currentTrack = song;
+        if (song && this.currentTrackId === trackId) {
+          this.currentTrack = song;
+          this.syncRoomPlayList();
+        }
         return song;
       } catch (error) {
         console.warn("获取一起听歌曲信息失败：", error);
