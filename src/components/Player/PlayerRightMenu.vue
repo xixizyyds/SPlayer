@@ -49,6 +49,18 @@
         <SvgIcon name="DesktopLyric2" :depth="statusStore.showDesktopLyric ? 1 : 3" />
       </div>
     </n-badge>
+    <!-- 一起听 -->
+    <n-badge
+      value="ON"
+      type="success"
+      :show="listenTogetherStore.inRoom"
+      :style="{ marginRight: listenTogetherStore.inRoom ? '12px' : null }"
+      class="hidden"
+    >
+      <div class="menu-icon hidden" @click.stop="openListenTogether()">
+        <SvgIcon name="Person" :depth="listenTogetherStore.inRoom ? 1 : 3" />
+      </div>
+    </n-badge>
     <!-- 其他控制 -->
     <n-dropdown
       v-if="settingStore.fullscreenPlayerElements.moreSettings"
@@ -99,10 +111,22 @@
 
 <script setup lang="ts">
 import { usePlayerController } from "@/core/player/PlayerController";
-import { useDataStore, useSettingStore, useStatusStore, useMusicStore } from "@/stores";
+import {
+  useDataStore,
+  useSettingStore,
+  useStatusStore,
+  useMusicStore,
+  useListenTogetherStore,
+} from "@/stores";
 import { isElectron } from "@/utils/env";
 import { renderIcon } from "@/utils/helper";
-import { openAutoClose, openChangeRate, openEqualizer, openABLoop } from "@/utils/modal";
+import {
+  openAutoClose,
+  openChangeRate,
+  openEqualizer,
+  openABLoop,
+  openListenTogether,
+} from "@/utils/modal";
 import { useAudioManager } from "@/core/player/AudioManager";
 import type { DropdownOption } from "naive-ui";
 import { useQualityControl } from "@/composables/useQualityControl";
@@ -111,6 +135,7 @@ const dataStore = useDataStore();
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
 const musicStore = useMusicStore();
+const listenTogetherStore = useListenTogetherStore();
 const player = usePlayerController();
 
 const {
@@ -149,6 +174,11 @@ const audioManager = useAudioManager();
 
 const controlsOptions = computed<DropdownOption[]>(() => [
   {
+    label: "一起听",
+    key: "listenTogether",
+    icon: renderIcon("Person"),
+  },
+  {
     label: "均衡器",
     key: "equalizer",
     icon: renderIcon("Eq"),
@@ -175,6 +205,9 @@ const controlsOptions = computed<DropdownOption[]>(() => [
 // 更多功能选择
 const handleControls = (key: string) => {
   switch (key) {
+    case "listenTogether":
+      openListenTogether();
+      break;
     case "equalizer":
       if (!audioManager.capabilities.supportsEqualizer) {
         window.$message.warning("当前引擎不支持均衡器功能");

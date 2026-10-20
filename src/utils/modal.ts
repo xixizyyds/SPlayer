@@ -414,6 +414,21 @@ export const openABLoop = async () => {
   });
 };
 
+/** 打开一起听弹窗 */
+export const openListenTogether = async () => {
+  const { default: ListenTogether } = await import("@/components/Modal/ListenTogether.vue");
+  window.$modal.create({
+    preset: "card",
+    transformOrigin: "center",
+    autoFocus: false,
+    style: { width: "520px" },
+    title: "一起听",
+    content: () => {
+      return h(ListenTogether);
+    },
+  });
+};
+
 /** 打开均衡器弹窗 */
 export const openEqualizer = async () => {
   const { default: Equalizer } = await import("@/components/Modal/Equalizer.vue");

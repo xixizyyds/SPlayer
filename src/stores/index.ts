@@ -9,3 +9,6 @@ export { useLocalStore } from "./local";
 
 // streaming-localforage
 export { useStreamingStore } from "./streaming";
+
+// 一起听
+export { useListenTogetherStore } from "./listentogether";

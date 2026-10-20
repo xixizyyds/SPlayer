@@ -44,6 +44,7 @@ declare module 'vue' {
     JumpArtist: typeof import('./src/components/Modal/JumpArtist.vue')['default']
     ListComment: typeof import('./src/components/List/ListComment.vue')['default']
     ListDetail: typeof import('./src/components/List/ListDetail.vue')['default']
+    ListenTogether: typeof import('./src/components/Modal/ListenTogether.vue')['default']
     LocalLyricDirectories: typeof import('./src/components/Setting/components/LocalLyricDirectories.vue')['default']
     LocalMusicDirectory: typeof import('./src/components/Modal/Setting/LocalMusicDirectory.vue')['default']
     Login: typeof import('./src/components/Modal/Login/Login.vue')['default']
