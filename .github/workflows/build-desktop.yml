@@ -47,6 +47,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # 仓库只带了 .env.example，生产构建需要 VITE_API_URL 指向内置服务，
+      # 否则渲染进程所有请求的 baseURL 会变成字符串 undefined，扫码登录表现为空白二维码
+      - name: write env
+        shell: bash
+        run: |
+          cat > .env <<'EOF'
+          VITE_WEB_PORT=14558
+          VITE_SERVER_PORT=25884
+          VITE_API_URL=/api/netease
+          EOF
+
       - name: build
         run: pnpm ${{ matrix.script }} --x64
         env:
