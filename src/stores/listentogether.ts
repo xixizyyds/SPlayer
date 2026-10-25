@@ -505,7 +505,8 @@ export const useListenTogetherStore = defineStore("listenTogether", {
           (newId, oldId) => {
             if (!this.inRoom || this.isApplyingRemote) return;
             if (!newId || newId === oldId || newId === this.currentTrackId) return;
-            void this.addLocalSongToRoom(newId);
+            // 本地自动切歌不算点歌，把播放器拉回房间当前曲目
+            void this.restoreRoomPlayback();
           },
         ),
       );
