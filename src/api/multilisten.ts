@@ -112,6 +112,8 @@ export const MULTI_SONG_OPERATE = {
   LIKE: 3,
   SWITCH: 4,
   REDHEART: 5,
+  COLLECT: 6,
+  DELETE: 7,
 } as const;
 
 /** 查询当前多人房间状态 */
@@ -193,6 +195,51 @@ export const multiListenOperate = (params: {
  * 退出多人房间
  * @param roomId 房间号
  */
+/** 房间消息里的歌曲资源 */
+export interface MultiListenHistoryResource {
+  resourceId?: number;
+  resourceType?: number;
+  bizId?: number;
+  title?: string;
+  artistName?: string[];
+  upCnt?: number;
+  zanCnt?: number;
+  uped?: boolean;
+}
+
+/** 房间消息记录 */
+export interface MultiListenHistoryRecord {
+  sendUid?: number;
+  sendTime?: number;
+  msgType?: number;
+  subType?: number | null;
+  resourceInfo?: MultiListenHistoryResource | null;
+  imChatRoomMsgBody?: { text?: string; mainStateText?: string } | null;
+}
+
+export const multiListenHistory = (params: {
+  roomId: string;
+  direction?: number;
+  cursor?: string;
+  size?: number;
+}) => {
+  return request<
+    MultiListenResponse<{
+      records?: MultiListenHistoryRecord[];
+      page?: { cursor?: string; size?: number };
+    }>
+  >({
+    baseURL: "/api/multilisten",
+    url: "/history",
+    method: "post",
+    data: {
+      direction: 0,
+      size: 100,
+      ...params,
+    },
+  });
+};
+
 export const multiListenExit = (roomId: string) => {
   return request<MultiListenResponse<unknown>>({
     baseURL: "/api/multilisten",

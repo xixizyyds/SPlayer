@@ -121,6 +121,19 @@
                 >
                   <SvgIcon :size="20" name="Up" />
                 </div>
+                <!-- 删除自己点的歌（一起听） -->
+                <div
+                  v-if="
+                    inRoomMode &&
+                    statusStore.playIndex !== index &&
+                    listenTogetherStore.queueOwnIds.includes(songData.id)
+                  "
+                  class="remove-song"
+                  title="删除我点的歌"
+                  @click.stop="handleRemoveSong(songData.id)"
+                >
+                  <SvgIcon :size="20" name="Delete" />
+                </div>
               </div>
             </div>
           </template>
@@ -215,6 +228,12 @@ const handlePlayIndex = (index: number) => {
 const handleTopSong = (songId: number) => {
   if (!songId) return;
   void listenTogetherStore.upSong(songId);
+};
+
+/** 一起听删除自己点的歌 */
+const handleRemoveSong = (songId: number) => {
+  if (!songId) return;
+  void listenTogetherStore.removeSongFromRoom(songId);
 };
 
 const playListRef = ref<InstanceType<typeof VirtualScroll> | null>(null);
@@ -417,6 +436,18 @@ const {
       padding: 8px;
       border-radius: 8px;
       color: rgba(var(--primary), 1);
+      transition: background-color 0.3s;
+      cursor: pointer;
+      &:hover {
+        background-color: rgba(var(--primary), 0.29);
+      }
+    }
+    .remove-song {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border-radius: 8px;
       transition: background-color 0.3s;
       cursor: pointer;
       &:hover {

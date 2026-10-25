@@ -213,6 +213,21 @@ export const initMultiListenAPI = async (fastify: FastifyInstance) => {
       );
     });
 
+    // 房间消息历史，用来还原完整队列和点歌人
+    fastify.post("/history", async (request, reply) => {
+      const { roomId, direction, cursor, size } = readBody(request);
+      if (!roomId) return reply.send({ code: 400, message: "缺少房间号", data: null });
+      const page = JSON.stringify({
+        size: Number(size) > 0 ? Number(size) : 100,
+        ...(cursor ? { cursor: String(cursor) } : {}),
+      });
+      return handle(request, reply, "/api/listen/together/multi/match/msg/history", {
+        roomId: String(roomId),
+        direction: Number(direction) || 0,
+        page,
+      });
+    });
+
     // 退出房间
     fastify.post("/exit", async (request, reply) => {
       const { roomId, exitType } = readBody(request);

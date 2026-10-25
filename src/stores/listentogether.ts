@@ -3,10 +3,12 @@ import {
   multiListenCreate,
   multiListenExit,
   multiListenHeartbeat,
+  multiListenHistory,
   multiListenJoin,
   multiListenOperate,
   multiListenStatus,
   type MultiListenPlayInfo,
+  type MultiListenHistoryRecord,
   type MultiListenRoomInfo,
   type MultiListenSnapshot,
   type MultiListenUserAgg,
@@ -95,6 +97,10 @@ interface ListenTogetherState {
   roomTrackIds: number[];
   /** 房间待播队列（含 bizId） */
   queueSongs: Array<{ songId: number; bizId: number }>;
+  /** 队列里由自己添加的歌曲，用于显示删除按钮 */
+  queueOwnIds: number[];
+  /** 已经播过的曲目，还原队列时排除 */
+  playedTrackIds: number[];
   /** 房间待播队列详情 */
   queueTracks: SongType[];
   /** 当前曲目被赞次数 */
@@ -166,6 +172,8 @@ export const useListenTogetherStore = defineStore("listenTogether", {
     remoteDuration: 0,
     roomTrackIds: [],
     queueSongs: [],
+    queueOwnIds: [],
+    playedTrackIds: [],
     queueTracks: [],
     zanCount: 0,
     waitSongCount: 0,
@@ -338,6 +346,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         this.startTimers();
         this.startPlayerWatchers();
         window.$message.success("一起听房间已创建");
+        void this.syncQueueFromHistory();
         void this.syncPlaylistToRoom();
         return true;
       } catch (error) {
@@ -395,6 +404,7 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         this.startTimers();
         this.startPlayerWatchers();
         window.$message.success("已加入一起听房间");
+        void this.syncQueueFromHistory();
         void this.syncPlaylistToRoom();
         return true;
       } catch (error) {
@@ -445,6 +455,8 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       this.remoteDuration = 0;
       this.roomTrackIds = [];
       this.queueSongs = [];
+      this.queueOwnIds = [];
+      this.playedTrackIds = [];
       this.queueTracks = [];
       this.zanCount = 0;
       this.waitSongCount = 0;
@@ -509,6 +521,89 @@ export const useListenTogetherStore = defineStore("listenTogether", {
       const value = Number(seconds) || 0;
       this.cooldownTick = Date.now();
       this.addCooldownEnd = value > 0 ? Date.now() + value * 1000 : 0;
+    },
+    /**
+     * 从房间消息历史还原完整队列
+     * 服务端只下发接下来几首，历史消息里有全部点歌记录和顶歌次数
+     */
+    async syncQueueFromHistory() {
+      if (!this.inRoom || !this.roomId) return;
+      const myUid = Number(useDataStore().userData.userId) || 0;
+      const records: MultiListenHistoryRecord[] = [];
+      let cursor = "";
+      for (let i = 0; i < 5; i += 1) {
+        const result = await multiListenHistory({ roomId: this.roomId, direction: 0, cursor });
+        const data = result?.data;
+        const list = data?.records ?? [];
+        records.push(...list);
+        const next = String(data?.page?.cursor ?? "");
+        if (!next || next === cursor || list.length < 100) break;
+        cursor = next;
+      }
+      if (!records.length) return;
+      const map = new Map<
+        number,
+        { songId: number; bizId: number; sendTime: number; upCnt: number; own: boolean }
+      >();
+      for (const record of records) {
+        if (record.msgType !== 2) continue;
+        const info = record.resourceInfo;
+        const songId = Number(info?.resourceId ?? 0);
+        if (!songId || songId === this.currentTrackId) continue;
+        if (this.playedTrackIds.includes(songId)) continue;
+        const sendTime = Number(record.sendTime ?? 0);
+        const upCnt = Number(info?.upCnt ?? 0);
+        const own = myUid > 0 && Number(record.sendUid) === myUid;
+        const exist = map.get(songId);
+        if (exist) {
+          exist.upCnt = Math.max(exist.upCnt, upCnt);
+          exist.bizId = exist.bizId || Number(info?.bizId ?? 0);
+          exist.own = exist.own || own;
+        } else {
+          map.set(songId, {
+            songId,
+            bizId: Number(info?.bizId ?? 0),
+            sendTime,
+            upCnt,
+            own,
+          });
+        }
+      }
+      const items = [...map.values()].sort(
+        (a, b) => b.upCnt - a.upCnt || a.sendTime - b.sendTime,
+      );
+      this.queueOwnIds = items.filter((item) => item.own).map((item) => item.songId);
+      this.setQueue(items.map(({ songId, bizId }) => ({ songId, bizId })));
+    },
+    /** 删除自己在房间里添加的歌曲 */
+    async removeSongFromRoom(songId: number) {
+      if (!this.inRoom || !this.roomId || !songId) return false;
+      const target = this.queueSongs.find((item) => item.songId === songId);
+      try {
+        const result = await multiListenOperate({
+          roomId: this.roomId,
+          songId,
+          bizId: target?.bizId ?? 0,
+          operate: MULTI_SONG_OPERATE.DELETE,
+        });
+        const data = result?.data;
+        const failed =
+          data?.result === false ||
+          (typeof data?.failedCode === "number" && data.failedCode !== 0);
+        if (!result || result.code !== 200 || failed) {
+          window.$message.warning(data?.failedMsg || "删除失败");
+          return false;
+        }
+        this.queueSongs = this.queueSongs.filter((item) => item.songId !== songId);
+        this.queueOwnIds = this.queueOwnIds.filter((id) => id !== songId);
+        void this.fetchQueueTracks();
+        window.$message.success("已从房间队列删除");
+        return true;
+      } catch (error) {
+        console.warn("删除房间歌曲失败：", error);
+        window.$message.warning("删除失败");
+        return false;
+      }
     },
     async refreshRoom(force = false) {
       if (!this.inRoom || this.refreshing) return;
@@ -576,8 +671,14 @@ export const useListenTogetherStore = defineStore("listenTogether", {
           })),
         );
         const isNewTrack = trackId !== this.currentTrackId;
+        if (isNewTrack && this.currentTrackId) {
+          this.playedTrackIds.push(this.currentTrackId);
+        }
         this.currentTrackId = trackId;
-        if (isNewTrack) void this.loadTrackInfo(trackId);
+        if (isNewTrack) {
+          void this.loadTrackInfo(trackId);
+          void this.syncQueueFromHistory();
+        }
         void this.applyPlayback(trackId, this.remoteProgress, force || isNewTrack);
       }
       this.syncRoomPlayList();
@@ -710,8 +811,10 @@ export const useListenTogetherStore = defineStore("listenTogether", {
         // 新歌排在队列末尾，服务端窗口暂时看不到，本地先补进列表
         if (songId !== this.currentTrackId && !this.queueSongs.some((i) => i.songId === songId)) {
           this.queueSongs.push({ songId, bizId: 0 });
+          if (!this.queueOwnIds.includes(songId)) this.queueOwnIds.push(songId);
           this.roomTrackIds = this.queueSongs.map((item) => item.songId);
           void this.fetchQueueTracks();
+          void this.syncQueueFromHistory();
         }
         if (!silent) window.$message.success("已加入房间歌单");
         this.setAddCooldown(Number(data?.nextAddSongDuration ?? 60));
